@@ -4,7 +4,10 @@ import cors from "cors";
 import helmet from "helmet";
 import { env, isProduction } from "./env.js";
 
-const allowedOrigins = new Set([env.FRONTEND_PUBLIC_URL, env.BACKEND_PUBLIC_URL]);
+const allowedOrigins = new Set([
+  env.FRONTEND_PUBLIC_URL.replace(/\/$/, ""),
+  env.BACKEND_PUBLIC_URL.replace(/\/$/, "")
+]);
 
 export const corsOptions: CorsOptions = {
   origin(origin, callback) {
