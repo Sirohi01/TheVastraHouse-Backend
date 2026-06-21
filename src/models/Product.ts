@@ -100,7 +100,7 @@ const merchandisingMetricsSchema = new Schema(
 
 const productSchema = new Schema(
   {
-    brandId: { type: Schema.Types.ObjectId, ref: "Brand", required: true, index: true },
+    brandId: { type: Schema.Types.ObjectId, ref: "Brand", index: true },
     name: { type: String, required: true, trim: true },
     slug: { type: String, required: true, trim: true, lowercase: true },
     description: { type: String, required: true, trim: true },

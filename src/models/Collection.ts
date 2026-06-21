@@ -14,7 +14,7 @@ const seoSchema = new Schema(
 
 const collectionSchema = new Schema(
   {
-    brandId: { type: Schema.Types.ObjectId, ref: "Brand", required: true, index: true },
+    brandId: { type: Schema.Types.ObjectId, ref: "Brand", index: true },
     name: { type: String, required: true, trim: true },
     slug: { type: String, required: true, trim: true, lowercase: true },
     description: { type: String, trim: true },

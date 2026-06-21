@@ -8,7 +8,6 @@ import { requireAuth, requirePermission } from "../middleware/authMiddleware.js"
 import { validateRequest } from "../middleware/validateRequest.js";
 import { Category } from "../models/Category.js";
 import { Collection } from "../models/Collection.js";
-import { Brand } from "../models/Brand.js";
 import { Product } from "../models/Product.js";
 import { Warehouse } from "../models/Warehouse.js";
 import { ProductReview } from "../models/ProductReview.js";
@@ -101,7 +100,6 @@ const variantInputSchema = z
 
 const productInputSchema = z
   .object({
-    brandId: objectIdSchema,
     name: z.string().min(1).max(180),
     slug: z.string().max(220).optional(),
     description: z.string().min(1),
@@ -156,7 +154,7 @@ const taxonomyInputSchema = z
   })
   .strict();
 
-const collectionInputSchema = taxonomyInputSchema.extend({ brandId: objectIdSchema });
+const collectionInputSchema = taxonomyInputSchema;
 
 const tagInputSchema = z
   .object({
@@ -707,11 +705,7 @@ async function updateProduct(req: Request, res: Response, next: NextFunction) {
 
 async function listAdminLookups(_req: Request, res: Response, next: NextFunction) {
   try {
-    const [brands, categories, collections, tags, warehouses] = await Promise.all([
-      Brand.find({ status: { $ne: "deleted" }, active: true })
-        .sort({ name: 1 })
-        .limit(100)
-        .lean(),
+    const [categories, collections, tags, warehouses] = await Promise.all([
       Category.find({ status: { $ne: "deleted" } })
         .sort({ name: 1 })
         .limit(200)
@@ -730,7 +724,7 @@ async function listAdminLookups(_req: Request, res: Response, next: NextFunction
         .lean(),
     ]);
 
-    res.json({ brands, categories, collections, tags, warehouses });
+    res.json({ categories, collections, tags, warehouses });
   } catch (error) {
     next(error);
   }
