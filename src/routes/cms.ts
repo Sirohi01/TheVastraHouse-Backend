@@ -35,6 +35,8 @@ const linkSchema = z
 const heroSlideSchema = z
   .object({
     copy: z.string().max(500).optional(),
+    copyFontSize: z.enum(["sm", "md", "lg"]).default("md"),
+    contentPosition: z.enum(["left", "center", "right"]).default("left"),
     eyebrow: z.string().max(120).optional(),
     fontFamily: z.enum(["serif", "sans"]).default("serif"),
     fontSize: z.enum(["sm", "md", "lg"]).default("lg"),
@@ -57,8 +59,13 @@ const aboutValueSchema = z
 const catalogPageContentSchema = z
   .object({
     description: z.string().max(500).optional(),
+    copyFontSize: z.enum(["sm", "md", "lg"]).default("md"),
+    contentPosition: z.enum(["left", "center", "right"]).default("left"),
     eyebrow: z.string().max(120).optional(),
+    fontFamily: z.enum(["serif", "sans"]).default("serif"),
+    fontSize: z.enum(["sm", "md", "lg"]).default("lg"),
     media: mediaReferenceSchema.nullable().optional(),
+    textColor: z.string().max(40).default("#ffffff"),
     title: z.string().max(180).optional(),
   })
   .strict();

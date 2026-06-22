@@ -13,6 +13,8 @@ const linkSchema = new Schema(
 const heroSlideSchema = new Schema(
   {
     copy: { type: String, trim: true },
+    copyFontSize: { type: String, enum: ["sm", "md", "lg"], default: "md" },
+    contentPosition: { type: String, enum: ["left", "center", "right"], default: "left" },
     eyebrow: { type: String, trim: true },
     fontFamily: { type: String, enum: ["serif", "sans"], default: "serif" },
     fontSize: { type: String, enum: ["sm", "md", "lg"], default: "lg" },
@@ -30,7 +32,12 @@ const catalogPageContentSchema = new Schema(
     eyebrow: { type: String, trim: true },
     title: { type: String, trim: true },
     description: { type: String, trim: true },
+    copyFontSize: { type: String, enum: ["sm", "md", "lg"], default: "md" },
+    contentPosition: { type: String, enum: ["left", "center", "right"], default: "left" },
+    fontFamily: { type: String, enum: ["serif", "sans"], default: "serif" },
+    fontSize: { type: String, enum: ["sm", "md", "lg"], default: "lg" },
     media: mediaReferenceSchema,
+    textColor: { type: String, trim: true, default: "#ffffff" },
   },
   { _id: false },
 );
