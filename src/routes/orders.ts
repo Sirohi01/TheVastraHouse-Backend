@@ -131,7 +131,7 @@ ordersRouter.get(
     try {
       const pagination = parsePagination(req.query);
       const filter = {
-        ...(req.query.status ? { status: req.query.status } : {}),
+        status: req.query.status ? req.query.status : { $ne: "pending_payment" },
         ...(req.query.search
           ? { orderNumber: { $regex: escapeRegExp(String(req.query.search)), $options: "i" } }
           : {}),
