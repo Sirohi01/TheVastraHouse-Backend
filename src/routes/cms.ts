@@ -43,6 +43,7 @@ const heroSlideSchema = z
     media: mediaReferenceSchema.nullable().optional(),
     primaryCta: linkSchema.optional(),
     secondaryCta: linkSchema.optional(),
+    showOutline: z.boolean().default(true),
     textColor: z.string().max(40).default("#ffffff"),
     title: z.string().max(160).optional(),
   })
@@ -65,6 +66,7 @@ const catalogPageContentSchema = z
     fontFamily: z.enum(["serif", "sans"]).default("serif"),
     fontSize: z.enum(["sm", "md", "lg"]).default("lg"),
     media: mediaReferenceSchema.nullable().optional(),
+    showOutline: z.boolean().default(true),
     textColor: z.string().max(40).default("#ffffff"),
     title: z.string().max(180).optional(),
   })
