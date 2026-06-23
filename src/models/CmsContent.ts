@@ -38,6 +38,7 @@ const catalogPageContentSchema = new Schema(
     fontFamily: { type: String, enum: ["serif", "sans"], default: "serif" },
     fontSize: { type: String, enum: ["sm", "md", "lg"], default: "lg" },
     media: mediaReferenceSchema,
+    promo: heroSlideSchema,
     showOutline: { type: Boolean, default: true },
     textColor: { type: String, trim: true, default: "#ffffff" },
   },
