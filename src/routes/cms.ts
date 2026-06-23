@@ -88,6 +88,7 @@ const cmsSchema = z
             primaryCta: linkSchema.optional(),
             secondaryCta: linkSchema.optional(),
             slides: z.array(heroSlideSchema).max(8).default([]),
+            story: heroSlideSchema.optional(),
             title: z.string().max(160).optional(),
           })
           .strict()
