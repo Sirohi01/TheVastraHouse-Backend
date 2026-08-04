@@ -83,8 +83,14 @@ const envSchema = z.object({
   SEO_DEFAULT_TITLE: z.string().default("The Vastra House — Soft-Luxury Indian Wear"),
   SEO_DEFAULT_DESCRIPTION: z
     .string()
-    .default("Soft-luxury Indian wear, festive edits, and everyday occasion pieces."),
-  SEO_DEFAULT_OG_IMAGE: z.string().default(""),
+    .default(
+      "Shop soft-luxury Indian wear at The Vastra House — festive kurtas, sarees and occasion wear crafted with heritage fabrics, made to order across India.",
+    ),
+  SEO_DEFAULT_OG_IMAGE: z
+    .string()
+    .default(
+      "https://res.cloudinary.com/dzxlcorcf/image/upload/w_1200,h_630,c_fill,g_auto/v1782143954/vastra-house/media/g9dvkswmban106sgcpra.png",
+    ),
   SEO_TWITTER_HANDLE: z.string().default(""),
   SEO_ORGANIZATION_LOGO_URL: z.string().default(""),
   SEO_ROBOTS_EXTRA_DISALLOW: z.string().default(""),
