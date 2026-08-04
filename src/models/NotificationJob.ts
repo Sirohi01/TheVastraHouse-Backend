@@ -1,7 +1,7 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
 import { notificationChannels } from "./NotificationTemplate.js";
 
-export const notificationJobStatuses = ["pending", "sent", "failed"] as const;
+export const notificationJobStatuses = ["pending", "sent", "failed", "skipped"] as const;
 
 const notificationJobSchema = new Schema(
   {

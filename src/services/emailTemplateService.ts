@@ -2,6 +2,7 @@ export type AuthEmailTemplate = {
   subject: string;
   text: string;
   html?: string;
+  attachments?: Array<{ content: Buffer; filename: string; mimeType: string }>;
 };
 
 export function buildEmailVerificationTemplate(token: string): AuthEmailTemplate {
@@ -106,5 +107,25 @@ Thank you for shopping with The Vastra House.`,
         </div>
       </div>
     `,
+  };
+}
+
+export function buildStatusUpdateTemplate(input: {
+  customerName?: string;
+  note?: string;
+  orderNumber: string;
+  productName?: string;
+  status: string;
+  trackingNumber?: string;
+  trackUrl: string;
+}): AuthEmailTemplate {
+  const greeting = input.customerName ? `Hi ${input.customerName},` : "Hi,";
+  const product = input.productName ? `\nProduct: ${input.productName}` : "";
+  const tracking = input.trackingNumber ? `\nTracking number: ${input.trackingNumber}` : "";
+  const note = input.note ? `\nUpdate note: ${input.note}` : "";
+  return {
+    subject: `${input.status}: ${input.orderNumber}`,
+    text: `${greeting}\n\nYour order status is now ${input.status}.\n\nOrder / Track ID: ${input.orderNumber}${product}${tracking}${note}\nTrack your order: ${input.trackUrl}\n\nThank you for shopping with The Vastra House.`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#fffaf1;color:#2c231d;border:1px solid #e5dac7"><div style="background:#8b1e2d;color:#fff;padding:24px"><h1 style="margin:0;font-size:26px">The Vastra House</h1><p style="margin:8px 0 0">${input.status}</p></div><div style="padding:24px"><p>${greeting}</p><p>Your order status is now <strong>${input.status}</strong>.</p><div style="background:#fff;border:1px solid #e5dac7;padding:16px;margin:18px 0"><p><strong>Track ID:</strong> ${input.orderNumber}</p>${input.productName ? `<p><strong>Product:</strong> ${input.productName}</p>` : ""}${input.trackingNumber ? `<p><strong>Tracking number:</strong> ${input.trackingNumber}</p>` : ""}${input.note ? `<p><strong>Update:</strong> ${input.note}</p>` : ""}</div><a href="${input.trackUrl}" style="display:inline-block;background:#8b1e2d;color:#fff;text-decoration:none;padding:12px 18px;border-radius:6px">Track order</a></div></div>`,
   };
 }

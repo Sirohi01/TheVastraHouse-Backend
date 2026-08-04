@@ -369,6 +369,14 @@ export async function runLowStockAlertJob() {
   return { ledgersChecked: ledgers.length, alertsOpened, alertsResolved };
 }
 
+export function startLowStockAlertJob(intervalMs = 10 * 60 * 1000) {
+  const run = () => void runLowStockAlertJob().catch(() => undefined);
+  run();
+  const timer = setInterval(run, intervalMs);
+  timer.unref();
+  return timer;
+}
+
 async function atomicMove(input: {
   input: StockEventInput;
   from: keyof StockState;

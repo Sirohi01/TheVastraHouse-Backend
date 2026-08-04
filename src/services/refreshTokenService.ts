@@ -90,3 +90,12 @@ export async function revokeRefreshTokenFamily(
 
   await RefreshToken.updateMany({ familyId, revokedAt: { $exists: false } }, { $set: update });
 }
+
+export async function revokeRefreshToken(token: string): Promise<void> {
+  const existingToken = await RefreshToken.findOne({ tokenHash: hashOpaqueToken(token) }).select(
+    "+tokenHash",
+  );
+  if (existingToken) {
+    await revokeRefreshTokenFamily(existingToken.familyId, "logout");
+  }
+}

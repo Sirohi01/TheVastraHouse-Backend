@@ -52,12 +52,23 @@ test("enqueueNotification skips silently when there is no recipient", async () =
   assert.equal(result, null);
 });
 
+test("enqueueNotification blocks WhatsApp without explicit consent", async () => {
+  const result = await enqueueNotification({
+    channel: "whatsapp",
+    eventType: "order_shipped",
+    fallback: { subject: "Shipped", text: "Your order shipped" },
+    to: "+919999999999",
+    variables: {},
+  });
+  assert.equal(result, null);
+});
+
 test("enqueueNotification rejects reserved placeholder email domains", async () => {
   const result = await enqueueNotification({
     channel: "email",
     eventType: "order_confirmation",
     fallback: { subject: "x", text: "x" },
-    to: "officialmanishsirohi.01@gmail.com",
+    to: "customer@example.com",
     variables: {},
   });
 

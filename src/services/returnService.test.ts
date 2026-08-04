@@ -51,7 +51,11 @@ test("refund method eligibility rejects impossible original-method refunds", () 
 test("return approval routes stock, records refund history, and queues credit note hook", async (t) => {
   const ctx = patchReturnModels();
   t.after(ctx.restore);
-  const order = buildOrder({ deliveredAt: new Date(), status: "delivered" });
+  const order = buildOrder({
+    deliveredAt: new Date(),
+    paymentMethod: "upi",
+    status: "delivered",
+  });
   const returnRequest = buildReturnRequest(order);
   ctx.order = order;
   ctx.returnRequest = returnRequest;
@@ -77,10 +81,34 @@ test("return approval routes stock, records refund history, and queues credit no
   assert.equal(ctx.storeCredits.length, 1);
 });
 
-test("second refund attempt and excessive refund amount are rejected", async (t) => {
+test("original Razorpay refund records the provider refund reference", async (t) => {
   const ctx = patchReturnModels();
   t.after(ctx.restore);
   const order = buildOrder({ deliveredAt: new Date(), status: "delivered" });
+  const returnRequest = buildReturnRequest(order);
+  ctx.order = order;
+  ctx.returnRequest = returnRequest;
+  ctx.paymentSession = buildPaymentSession(order, { method: "razorpay", paidAmount: 1999 });
+
+  const result = await approveReturn({
+    actor: { actorId: String(new Types.ObjectId()), actorType: "admin" },
+    refundMethod: "original_payment",
+    returnRequestId: String(returnRequest._id),
+    stockDisposition: "restock",
+  });
+
+  assert.match(String(result.refund.gatewayRefundId), /^rfnd_dev_/);
+  assert.equal(result.refund.status, "processed");
+});
+
+test("second refund attempt and excessive refund amount are rejected", async (t) => {
+  const ctx = patchReturnModels();
+  t.after(ctx.restore);
+  const order = buildOrder({
+    deliveredAt: new Date(),
+    paymentMethod: "upi",
+    status: "delivered",
+  });
   const returnRequest = buildReturnRequest(order);
   ctx.order = order;
   ctx.returnRequest = returnRequest;
@@ -230,7 +258,11 @@ function patchReturnModels() {
   });
 }
 
-function buildOrder(input: { deliveredAt?: Date; status?: "delivered" | "returned" }) {
+function buildOrder(input: {
+  deliveredAt?: Date;
+  paymentMethod?: "razorpay" | "cod" | "manual_bank_transfer" | "upi";
+  status?: "delivered" | "returned";
+}) {
   const warehouseId = new Types.ObjectId();
   const order = {
     _id: new Types.ObjectId(),
@@ -244,6 +276,7 @@ function buildOrder(input: { deliveredAt?: Date; status?: "delivered" | "returne
       },
     ],
     orderNumber: "TVH-RETURN-1",
+    paymentMethod: input.paymentMethod ?? ("razorpay" as const),
     paymentSessionId: new Types.ObjectId(),
     save: async () => order,
     shipment: { deliveredAt: input.deliveredAt },
@@ -302,5 +335,6 @@ function buildPaymentSession(
     orderReference: order.orderNumber,
     paidAmount: input.paidAmount,
     payableNow: 1999,
+    razorpayPaymentId: "pay_test_123",
   };
 }

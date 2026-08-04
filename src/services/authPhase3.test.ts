@@ -4,6 +4,7 @@ import { createOpaqueToken, hashOpaqueToken } from "./cryptoTokenService.js";
 import { signAccessToken, verifyAccessToken } from "./jwtService.js";
 import { hashPassword, verifyPassword } from "./passwordService.js";
 import { hasPermission } from "./rbacService.js";
+import { seedRoles } from "./roleSeedService.js";
 import { createTotpSecret } from "./totpService.js";
 
 test("password hashing verifies correct passwords and rejects wrong passwords", async () => {
@@ -64,4 +65,33 @@ test("RBAC denies customers and respects admin permissions and overrides", () =>
     ),
     false,
   );
+});
+
+test("seven documented admin roles enforce their allow and deny boundaries", () => {
+  assert.equal(seedRoles.length, 7);
+  const cases = [
+    ["super-admin", "users", "manage", true],
+    ["admin", "settings", "manage", true],
+    ["admin", "users", "read", false],
+    ["inventory-manager", "inventory", "manage", true],
+    ["inventory-manager", "payments", "manage", false],
+    ["order-manager", "orders", "manage", true],
+    ["order-manager", "cms", "manage", false],
+    ["content-manager", "cms", "manage", true],
+    ["content-manager", "orders", "manage", false],
+    ["marketing-manager", "notifications", "manage", true],
+    ["marketing-manager", "inventory", "manage", false],
+    ["support-agent", "support", "manage", true],
+    ["support-agent", "payments", "manage", false],
+  ] as const;
+
+  for (const [slug, module, action, expected] of cases) {
+    const role = seedRoles.find((item) => item.slug === slug);
+    assert.ok(role, `missing role ${slug}`);
+    assert.equal(
+      hasPermission({ type: "admin", permissions: role.permissions }, { module, action }),
+      expected,
+      `${slug} ${module}/${action}`,
+    );
+  }
 });

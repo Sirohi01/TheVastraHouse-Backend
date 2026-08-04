@@ -7,8 +7,11 @@ import { Order } from "../models/Order.js";
 import { PaymentHistory } from "../models/PaymentHistory.js";
 import { PaymentSession } from "../models/PaymentSession.js";
 import { PaymentWebhookEvent } from "../models/PaymentWebhookEvent.js";
+import { Refund } from "../models/Refund.js";
+import { ReturnRequest } from "../models/ReturnRequest.js";
 import { writeAuditLog } from "./auditLogService.js";
 import { finalizeOrderAfterPayment } from "./orderFulfillmentService.js";
+import { transitionOrderDocument } from "./orderLifecycleService.js";
 import { getPaymentSettings } from "./paymentSettingsService.js";
 import { getRuntimeNumberSetting } from "./runtimeSettingsService.js";
 
@@ -41,6 +44,14 @@ type RazorpayOrder = {
   amount: number;
   currency: string;
   receipt?: string;
+  status?: string;
+};
+
+type RazorpayRefund = {
+  id: string;
+  amount: number;
+  currency?: string;
+  payment_id: string;
   status?: string;
 };
 
@@ -106,6 +117,40 @@ export async function createRazorpayPayment(input: CreatePaymentInput) {
   });
 
   return { gatewayOrder, session };
+}
+
+export async function refundRazorpayPayment(input: {
+  amount: number;
+  paymentId: string;
+  returnNumber: string;
+}): Promise<RazorpayRefund> {
+  if (!input.paymentId || input.amount <= 0) {
+    throw new AppError("Razorpay refund details are invalid", 400);
+  }
+
+  if (
+    isTestRuntime() ||
+    !env.RAZORPAY_ENABLE_GATEWAY_CALLS ||
+    !env.RAZORPAY_KEY_ID ||
+    !env.RAZORPAY_KEY_SECRET
+  ) {
+    return {
+      amount: Math.round(input.amount * 100),
+      id: `rfnd_dev_${crypto.randomUUID()}`,
+      payment_id: input.paymentId,
+      status: "processed",
+    };
+  }
+
+  const razorpay = new Razorpay({
+    key_id: env.RAZORPAY_KEY_ID,
+    key_secret: env.RAZORPAY_KEY_SECRET,
+  });
+  return (await razorpay.payments.refund(input.paymentId, {
+    amount: Math.round(input.amount * 100),
+    notes: { returnNumber: input.returnNumber },
+    speed: "normal",
+  })) as RazorpayRefund;
 }
 
 /**
@@ -247,6 +292,7 @@ export async function handleRazorpayWebhook(rawBody: Buffer, signature: string |
     payload?: {
       payment?: { entity?: { id?: string; order_id?: string; amount?: number; currency?: string } };
       order?: { entity?: { id?: string } };
+      refund?: { entity?: { id?: string; payment_id?: string; amount?: number; status?: string } };
     };
   };
   const eventId = payload.id ?? payload.payload?.payment?.entity?.id ?? crypto.randomUUID();
@@ -290,10 +336,42 @@ export async function handleRazorpayWebhook(rawBody: Buffer, signature: string |
     }
   }
 
+  const gatewayRefund = payload.payload?.refund?.entity;
+  if (
+    (payload.event === "refund.processed" || payload.event === "refund.failed") &&
+    gatewayRefund?.id
+  ) {
+    const refund = await Refund.findOne({ gatewayRefundId: gatewayRefund.id });
+    if (refund) {
+      refund.status = payload.event === "refund.processed" ? "processed" : "rejected";
+      refund.processedAt = payload.event === "refund.processed" ? new Date() : undefined;
+      refund.metadata = { ...(refund.metadata ?? {}), gatewayStatus: gatewayRefund.status };
+      await refund.save();
+      const returnRequest = await ReturnRequest.findById(refund.returnRequestId);
+      if (returnRequest && payload.event === "refund.processed") {
+        returnRequest.status = "refunded";
+        await returnRequest.save();
+        const order = await Order.findById(refund.orderId);
+        if (order?.status === "returned") {
+          await transitionRefundedOrder(order);
+        }
+      }
+    }
+  }
+
   event.processedAt = new Date();
   await event.save();
 
   return { duplicate: false, event };
+}
+
+async function transitionRefundedOrder(order: Awaited<ReturnType<typeof Order.findById>>) {
+  if (!order) return;
+  const { transitionOrderDocument } = await import("./orderLifecycleService.js");
+  await transitionOrderDocument(
+    order as unknown as Parameters<typeof transitionOrderDocument>[0],
+    { actor: { actorType: "system" }, note: "Razorpay refund processed", toStatus: "refunded" },
+  );
 }
 
 export async function createCodPayment(input: CreatePaymentInput) {
@@ -415,7 +493,6 @@ export async function approveManualPayment(input: {
     paymentSessionId: session._id,
     paymentSessionStatus: session.status,
   });
-
   return session;
 }
 
@@ -459,6 +536,17 @@ export async function rejectManualPayment(input: {
     action: "update",
     metadata: { transition: "reject_payment", reason: input.reason },
   });
+  const order = await Order.findOne({ paymentSessionId: session._id });
+  if (order?.status === "payment_verification_pending") {
+    await transitionOrderDocument(
+      order as unknown as Parameters<typeof transitionOrderDocument>[0],
+      {
+        actor: { actorId: input.adminUserId, actorType: "admin" },
+        note: input.reason,
+        toStatus: "payment_rejected",
+      },
+    );
+  }
 
   return session;
 }
@@ -546,6 +634,7 @@ async function createRazorpayGatewayOrder(input: {
 function isTestRuntime() {
   return (
     env.NODE_ENV === "test" ||
+    Boolean(process.env.NODE_TEST_CONTEXT) ||
     process.argv.includes("--test") ||
     process.env.npm_lifecycle_event === "test" ||
     process.env.npm_lifecycle_script?.includes("--test") === true

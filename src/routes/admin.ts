@@ -1,6 +1,5 @@
 import { Router } from "express";
-import { AppError } from "../middleware/errorHandler.js";
-import { requireAuth } from "../middleware/authMiddleware.js";
+import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
 import { AbandonedCartEvent } from "../models/AbandonedCartEvent.js";
 import { LowStockAlert } from "../models/LowStockAlert.js";
 import { Order } from "../models/Order.js";
@@ -27,12 +26,8 @@ const DASHBOARD_WINDOW_DAYS = 30;
 const TREND_WINDOW_DAYS = 14;
 const DASHBOARD_TIMEZONE = "Asia/Kolkata";
 
-adminRouter.get("/dashboard", requireAuth, async (req, res, next) => {
+adminRouter.get("/dashboard", requireAuth, requirePermission({ module: "analytics", action: "read" }), async (_req, res, next) => {
   try {
-    if (req.user?.type !== "admin") {
-      throw new AppError("Permission denied", 403);
-    }
-
     const now = new Date();
     const windowStart = new Date(now.getTime() - DASHBOARD_WINDOW_DAYS * 86_400_000);
     const trendStart = new Date(now.getTime() - (TREND_WINDOW_DAYS - 1) * 86_400_000);
@@ -329,12 +324,12 @@ adminRouter.get("/dashboard", requireAuth, async (req, res, next) => {
   }
 });
 
-adminRouter.get("/dashboard/export.csv", requireAuth, async (req, res, next) => {
+adminRouter.get(
+  "/dashboard/export.csv",
+  requireAuth,
+  requirePermission({ module: "analytics", action: "read" }),
+  async (req, res, next) => {
   try {
-    if (req.user?.type !== "admin") {
-      throw new AppError("Permission denied", 403);
-    }
-
     const rangeDays = Math.min(Math.max(Number(req.query.range) || DASHBOARD_WINDOW_DAYS, 1), 365);
     const windowStart = new Date(Date.now() - rangeDays * 86_400_000);
     const orders = await Order.find({ createdAt: { $gte: windowStart } })
@@ -372,7 +367,8 @@ adminRouter.get("/dashboard/export.csv", requireAuth, async (req, res, next) => 
   } catch (error) {
     next(error);
   }
-});
+  },
+);
 
 function csvEscape(value: string) {
   if (/[",\r\n]/.test(value)) {

@@ -11,6 +11,7 @@ import { createProductionTrackersForOrder } from "./preOrderService.js";
 import { qualifyReferral } from "./referralService.js";
 import { earnPointsForOrder } from "./rewardPointsService.js";
 import { getRuntimeSetting } from "./runtimeSettingsService.js";
+import { generateConfirmationDocuments } from "./invoiceService.js";
 
 type FulfillableOrder = {
   _id: unknown;
@@ -20,7 +21,8 @@ type FulfillableOrder = {
   paymentMethod: "razorpay" | "cod" | "manual_bank_transfer" | "upi";
   userId?: unknown;
   guestEmail?: string;
-  shippingAddress?: { fullName?: string };
+  whatsappOptIn?: boolean;
+  shippingAddress?: { fullName?: string; phone?: string };
   items: Array<{
     productId: unknown;
     variantId: unknown;
@@ -108,10 +110,15 @@ async function confirmOrderForFirstTime(
   await qualifyReferral(order);
 
   await sendOrderConfirmationEmail(
-    { guestEmail: order.guestEmail, shippingAddress: order.shippingAddress },
+    {
+      guestEmail: order.guestEmail,
+      shippingAddress: order.shippingAddress,
+      whatsappOptIn: order.whatsappOptIn,
+    },
     order,
     input.payableNow,
   );
+  await generateConfirmationDocuments(order._id);
 
   return order;
 }
@@ -155,13 +162,17 @@ async function deductPendingReservations(order: FulfillableOrder, actor: OrderAc
 }
 
 export async function sendOrderConfirmationEmail(
-  input: { guestEmail?: string; shippingAddress?: { fullName?: string } },
+  input: {
+    guestEmail?: string;
+    shippingAddress?: { fullName?: string; phone?: string };
+    whatsappOptIn?: boolean;
+  },
   order: { _id?: unknown; orderNumber: string; totals: { grandTotal: number; currencyCode: string } },
   payableNow: number,
 ) {
   const email = input.guestEmail;
 
-  if (!email) {
+  if (!email && !(input.whatsappOptIn && input.shippingAddress?.phone)) {
     return;
   }
 
@@ -177,14 +188,30 @@ export async function sendOrderConfirmationEmail(
     trackUrl: `${await frontendPublicUrl()}/track-order?order=${encodeURIComponent(order.orderNumber)}`,
   };
 
-  await enqueueNotification({
-    channel: "email",
-    eventType: "order_confirmation",
-    fallback: buildOrderConfirmationTemplate(variables),
-    relatedEntity: order._id ? { id: String(order._id), type: "order" } : undefined,
-    to: email,
-    variables,
-  });
+  const fallback = buildOrderConfirmationTemplate(variables);
+  await Promise.all([
+    email
+      ? enqueueNotification({
+          channel: "email",
+          eventType: "order_confirmation",
+          fallback,
+          relatedEntity: order._id ? { id: String(order._id), type: "order" } : undefined,
+          to: email,
+          variables,
+        })
+      : null,
+    input.whatsappOptIn && input.shippingAddress?.phone
+      ? enqueueNotification({
+          channel: "whatsapp",
+          consentGranted: true,
+          eventType: "order_confirmation",
+          fallback,
+          relatedEntity: order._id ? { id: String(order._id), type: "order" } : undefined,
+          to: input.shippingAddress.phone,
+          variables,
+        })
+      : null,
+  ]);
 }
 
 export async function sendBalancePaymentReceivedEmail(

@@ -129,6 +129,7 @@ const orderSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: "User", index: true },
     guestEmail: { type: String, lowercase: true, trim: true, index: true },
     guestSessionId: { type: String, trim: true, index: true },
+    whatsappOptIn: { type: Boolean, default: false },
     cartId: { type: Schema.Types.ObjectId, ref: "Cart" },
     paymentSessionId: { type: Schema.Types.ObjectId, ref: "PaymentSession" },
     status: { type: String, enum: orderStatuses, required: true, index: true },

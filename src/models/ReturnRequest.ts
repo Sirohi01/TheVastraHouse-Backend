@@ -39,7 +39,7 @@ const returnRequestSchema = new Schema(
     decidedAt: { type: Date },
     creditNoteStatus: {
       type: String,
-      enum: ["not_required", "queued"],
+      enum: ["not_required", "queued", "generated"],
       required: true,
       default: "not_required",
     },

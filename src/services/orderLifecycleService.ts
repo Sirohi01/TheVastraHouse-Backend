@@ -6,15 +6,20 @@ import { PaymentSession } from "../models/PaymentSession.js";
 import { writeAuditLog } from "./auditLogService.js";
 import { releaseOrderStock } from "./inventoryService.js";
 import { releasePreOrderSlots } from "./preOrderService.js";
+import { notifyOrderStatusChanged } from "./commerceNotificationService.js";
+import { generateDispatchDocument } from "./invoiceService.js";
 
 export type OrderStatus = (typeof orderStatuses)[number];
 
 type OrderDoc = HydratedDocument<{
   _id: Types.ObjectId;
   orderNumber: string;
+  guestEmail?: string;
+  whatsappOptIn?: boolean;
   paymentSessionId?: Types.ObjectId;
   userId: Types.ObjectId;
   status: OrderStatus;
+  shippingAddress?: { fullName?: string; phone?: string };
   items: Array<{
     variantId: Types.ObjectId;
     quantity: number;
@@ -181,6 +186,10 @@ export async function transitionOrderDocument(
     entity: { id: order._id, type: "order", displayId: order.orderNumber },
     metadata: { fromStatus, toStatus: input.toStatus },
   });
+  await notifyOrderStatusChanged(order, input.toStatus, input.note);
+  if (input.toStatus === "shipped") {
+    await generateDispatchDocument(order._id);
+  }
   return order;
 }
 

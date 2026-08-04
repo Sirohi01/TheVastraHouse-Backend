@@ -9,6 +9,8 @@ import { StoreCreditIssue } from "../models/StoreCreditIssue.js";
 import { writeAuditLog } from "./auditLogService.js";
 import { markDamagedStock, markReturnedStock, restockReturnedStock } from "./inventoryService.js";
 import { transitionOrderDocument } from "./orderLifecycleService.js";
+import { refundRazorpayPayment } from "./paymentService.js";
+import { generateReturnDocuments } from "./invoiceService.js";
 
 export const returnPolicy = {
   windowDays: 7,
@@ -55,6 +57,7 @@ type PaymentSessionDoc = HydratedDocument<{
   paidAmount: number;
   payableNow: number;
   currencyCode: string;
+  razorpayPaymentId?: string;
 }>;
 
 export async function requestReturn(input: {
@@ -142,6 +145,11 @@ export async function approveReturn(input: {
     );
   }
 
+  const gatewayRefund =
+    input.refundMethod === "original_payment"
+      ? await refundOriginalRazorpayPayment(paymentSession, requestedAmount, returnRequest.returnNumber)
+      : undefined;
+  const refundProcessed = !gatewayRefund || gatewayRefund.status === "processed";
   const refund = await Refund.create({
     amount: requestedAmount,
     currencyCode: paymentSession.currencyCode,
@@ -149,10 +157,12 @@ export async function approveReturn(input: {
     orderId: order._id,
     orderNumber: order.orderNumber,
     paymentSessionId: paymentSession._id,
-    processedAt: new Date(),
+    gatewayRefundId: gatewayRefund?.id,
+    metadata: gatewayRefund ? { gatewayStatus: gatewayRefund.status } : undefined,
+    processedAt: refundProcessed ? new Date() : undefined,
     processedBy: input.actor.actorId ? new Types.ObjectId(input.actor.actorId) : undefined,
     returnRequestId: returnRequest._id,
-    status: "processed",
+    status: refundProcessed ? "processed" : "pending",
     userId: order.userId,
   });
 
@@ -176,7 +186,7 @@ export async function approveReturn(input: {
     actorType: input.actor.actorType,
     amount: refund.amount,
     currencyCode: refund.currencyCode,
-    event: "refund_processed",
+    event: refundProcessed ? "refund_processed" : "refund_pending",
     method: order.paymentMethod,
     metadata: {
       refundId: String(refund._id),
@@ -187,7 +197,7 @@ export async function approveReturn(input: {
     paymentSessionId: paymentSession._id,
   });
 
-  returnRequest.status = "refunded";
+  returnRequest.status = refundProcessed ? "refunded" : "approved";
   returnRequest.decisionNote = input.note;
   returnRequest.stockDisposition = input.stockDisposition;
   returnRequest.decidedAt = new Date();
@@ -197,7 +207,14 @@ export async function approveReturn(input: {
   returnRequest.creditNoteStatus = "queued";
   await returnRequest.save();
 
-  if (order.status === "returned") {
+  await generateReturnDocuments({
+    orderId: order._id,
+    refundAmount: refund.amount,
+    refundMethod: input.refundMethod,
+    returnRequestId: returnRequest._id,
+  });
+
+  if (order.status === "returned" && refundProcessed) {
     await transitionOrderDocument(
       order as unknown as Parameters<typeof transitionOrderDocument>[0],
       {
@@ -229,6 +246,21 @@ export async function approveReturn(input: {
   });
 
   return { refund, returnRequest };
+}
+
+async function refundOriginalRazorpayPayment(
+  paymentSession: PaymentSessionDoc,
+  amount: number,
+  returnNumber: string,
+) {
+  if (!paymentSession.razorpayPaymentId) {
+    throw new AppError("Captured Razorpay payment ID is required for original refund", 409);
+  }
+  return refundRazorpayPayment({
+    amount,
+    paymentId: paymentSession.razorpayPaymentId,
+    returnNumber,
+  });
 }
 
 export async function rejectReturn(input: {

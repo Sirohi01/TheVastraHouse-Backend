@@ -1,4 +1,5 @@
 import { logger } from "../utils/logger.js";
+import { env } from "../config/env.js";
 import { getRuntimeSetting } from "./runtimeSettingsService.js";
 
 export type WhatsappTemplate = {
@@ -7,6 +8,10 @@ export type WhatsappTemplate = {
 };
 
 export async function sendWhatsappMessage(to: string, template: WhatsappTemplate) {
+  if (!env.WHATSAPP_ENABLED) {
+    logger.info({ subject: template.subject, to }, "WhatsApp is globally disabled; message skipped");
+    return { skipped: true };
+  }
   const settings = await whatsappSettings();
 
   if (!settings.phoneNumberId || !settings.accessToken) {

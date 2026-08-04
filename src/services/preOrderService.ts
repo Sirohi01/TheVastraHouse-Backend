@@ -3,6 +3,7 @@ import { AppError } from "../middleware/errorHandler.js";
 import { Order } from "../models/Order.js";
 import { Product, productionStages } from "../models/Product.js";
 import { ProductionTracker } from "../models/ProductionTracker.js";
+import { notifyProductionStageChanged } from "./commerceNotificationService.js";
 import {
   recordOrderTimeline,
   transitionOrderDocument,
@@ -50,6 +51,37 @@ export function assertPreOrderWindow(preOrder?: PreOrderVariantSnapshot, now = n
   if (preOrder.endAt && preOrder.endAt.getTime() < now.getTime()) {
     throw new AppError("Pre-order window has closed", 409);
   }
+}
+
+export async function closeExpiredPreOrders(now = new Date()) {
+  const expiredCondition = {
+    $or: [
+      { "variant.preOrder.endAt": { $lt: now } },
+      { "variant.preOrder.remainingQuantity": { $lte: 0 } },
+    ],
+    "variant.preOrder.enabled": true,
+  };
+  const result = await Product.updateMany(
+    {
+      variants: {
+        $elemMatch: {
+          $or: [{ "preOrder.endAt": { $lt: now } }, { "preOrder.remainingQuantity": { $lte: 0 } }],
+          "preOrder.enabled": true,
+        },
+      },
+    },
+    { $set: { "variants.$[variant].preOrder.enabled": false } },
+    { arrayFilters: [expiredCondition] },
+  );
+  return { productsUpdated: result.modifiedCount };
+}
+
+export function startPreOrderAutoCloseJob(intervalMs = 5 * 60 * 1000) {
+  const run = () => void closeExpiredPreOrders().catch(() => undefined);
+  run();
+  const timer = setInterval(run, intervalMs);
+  timer.unref();
+  return timer;
 }
 
 export async function reservePreOrderSlots(
@@ -208,6 +240,7 @@ export async function updateProductionStage(input: {
       stage: input.stage,
     });
     await tracker.save();
+    await notifyProductionStageChanged(tracker, input.stage, input.note);
   }
 
   const orderIds = [...new Set(trackers.map((tracker) => String(tracker.orderId)))];

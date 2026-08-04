@@ -5,8 +5,11 @@ import { startMerchandisingBadgeJob } from "./services/merchandisingBadgeService
 import { startAbandonedCartJob, startWishlistSignalJob } from "./services/cartService.js";
 import { startNotificationDispatchJob } from "./services/notificationDispatchService.js";
 import { startPendingPaymentCleanupJob } from "./services/orderLifecycleService.js";
+import { startLowStockAlertJob } from "./services/inventoryService.js";
+import { startPreOrderAutoCloseJob } from "./services/preOrderService.js";
 import { seedDefaultRoles } from "./services/roleSeedService.js";
 import { logger } from "./utils/logger.js";
+import { startDocumentReconciliationJob } from "./services/invoiceService.js";
 
 async function bootstrap() {
   if (isProduction) {
@@ -33,6 +36,9 @@ async function bootstrap() {
   const wishlistSignalJob = startWishlistSignalJob();
   const notificationDispatchJob = startNotificationDispatchJob();
   const pendingPaymentCleanupJob = startPendingPaymentCleanupJob();
+  const lowStockAlertJob = startLowStockAlertJob();
+  const preOrderAutoCloseJob = startPreOrderAutoCloseJob();
+  const documentReconciliationJob = startDocumentReconciliationJob();
 
   const shutdown = (signal: NodeJS.Signals) => {
     logger.info({ signal }, "Shutting down backend server");
@@ -41,6 +47,9 @@ async function bootstrap() {
     clearInterval(wishlistSignalJob);
     clearInterval(notificationDispatchJob);
     clearInterval(pendingPaymentCleanupJob);
+    clearInterval(lowStockAlertJob);
+    clearInterval(preOrderAutoCloseJob);
+    clearInterval(documentReconciliationJob);
     server.close(() => {
       process.exit(0);
     });

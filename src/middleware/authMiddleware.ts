@@ -79,6 +79,11 @@ export function requirePermission(permission: Permission): RequestHandler {
       return;
     }
 
+    if (user.status !== "active" || user.deactivatedAt) {
+      next(new AppError("Account is inactive", 403));
+      return;
+    }
+
     const role = user.roleSlug
       ? ((await Role.findOne({ slug: user.roleSlug }).lean().exec()) as {
           permissions?: Permission[];

@@ -31,6 +31,7 @@ const checkoutSchema = z
     shippingAddress: addressSchema,
     billingAddress: addressSchema.optional(),
     guestEmail: z.string().email().optional(),
+    whatsappOptIn: z.boolean().optional(),
     shippingMethod: z.enum(["standard", "express"]),
     paymentMethod: z.enum(["razorpay", "cod", "manual_bank_transfer", "upi"]),
     paymentMode: z.enum(["full", "advance", "balance"]).optional(),

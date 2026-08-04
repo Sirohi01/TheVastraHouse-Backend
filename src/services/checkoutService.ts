@@ -4,6 +4,7 @@ import { AppError } from "../middleware/errorHandler.js";
 import { Cart } from "../models/Cart.js";
 import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
+import { User } from "../models/User.js";
 import { createManualPayment, createRazorpayPayment, createUpiPayment } from "./paymentService.js";
 import {
   deductOrderReservedStock,
@@ -66,6 +67,7 @@ export type CheckoutInput = {
   };
   upiReference?: string;
   notes?: string;
+  whatsappOptIn?: boolean;
 };
 
 type CartLine = {
@@ -216,7 +218,12 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     ...(input.userId ? { userId: input.userId } : {}),
     guestEmail: input.guestEmail,
     guestSessionId: input.guestSessionId,
+    whatsappOptIn: input.whatsappOptIn === true,
   });
+
+  if (input.userId && input.whatsappOptIn === true) {
+    await User.updateOne({ _id: input.userId }, { $set: { whatsappOptIn: true } });
+  }
 
   if (stockReservations.length && (status === "confirmed" || status === "pre_order_confirmed")) {
     await deductOrderReservedStock({

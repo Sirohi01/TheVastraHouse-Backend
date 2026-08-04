@@ -65,26 +65,49 @@ function upgradeToTls(socket: net.Socket, host: string) {
 }
 
 function buildMimeMessage(to: string, template: AuthEmailTemplate, settings: SmtpSettings) {
-  const boundary = `vastra-${Date.now()}`;
+  const mixedBoundary = `vastra-mixed-${Date.now()}`;
+  const alternativeBoundary = `vastra-alt-${Date.now()}`;
   const fromName = encodeHeader(settings.fromName);
-
-  return [
+  const parts = [
     `From: ${fromName} <${settings.fromEmail}>`,
     `To: <${to}>`,
     `Subject: ${encodeHeader(template.subject)}`,
     "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
     "",
-    `--${boundary}`,
+    `--${mixedBoundary}`,
+    `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
+    "",
+    `--${alternativeBoundary}`,
     'Content-Type: text/plain; charset="UTF-8"',
     "",
     template.text,
-    `--${boundary}`,
+    `--${alternativeBoundary}`,
     'Content-Type: text/html; charset="UTF-8"',
     "",
     template.html ?? template.text.replace(/\n/g, "<br />"),
-    `--${boundary}--`,
-  ].join("\r\n");
+    `--${alternativeBoundary}--`,
+  ];
+  for (const attachment of template.attachments ?? []) {
+    parts.push(
+      `--${mixedBoundary}`,
+      `Content-Type: ${attachment.mimeType}; name="${sanitizeFilename(attachment.filename)}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${sanitizeFilename(attachment.filename)}"`,
+      "",
+      wrapBase64(attachment.content.toString("base64")),
+    );
+  }
+  parts.push(`--${mixedBoundary}--`);
+  return parts.join("\r\n");
+}
+
+function sanitizeFilename(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+function wrapBase64(value: string) {
+  return value.match(/.{1,76}/g)?.join("\r\n") ?? value;
 }
 
 function createReader(socket: net.Socket) {

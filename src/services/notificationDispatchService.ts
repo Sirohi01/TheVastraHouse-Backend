@@ -13,6 +13,7 @@ export type NotificationFallback = {
   subject: string;
   text: string;
   html?: string;
+  attachments?: Array<{ content: Buffer; filename: string; mimeType: string }>;
 };
 
 export async function enqueueNotification(input: {
@@ -22,8 +23,18 @@ export async function enqueueNotification(input: {
   variables: Record<string, string | undefined>;
   fallback: NotificationFallback;
   relatedEntity?: { type: string; id?: string };
+  deduplicate?: boolean;
+  consentGranted?: boolean;
 }) {
   const recipient = input.to?.trim().toLowerCase();
+  if (input.channel === "whatsapp" && !env.WHATSAPP_ENABLED) {
+    logger.info({ eventType: input.eventType }, "WhatsApp globally disabled; notification not queued");
+    return null;
+  }
+  if (input.channel === "whatsapp" && input.consentGranted !== true) {
+    logger.warn({ eventType: input.eventType, to: recipient }, "WhatsApp notification skipped without explicit consent");
+    return null;
+  }
   if (!recipient || isPlaceholderRecipient(recipient)) {
     if (recipient) {
       logger.warn({ eventType: input.eventType, to: recipient }, "Placeholder email rejected");
@@ -31,7 +42,7 @@ export async function enqueueNotification(input: {
     return null;
   }
 
-  if (input.relatedEntity?.id) {
+  if (input.relatedEntity?.id && input.deduplicate !== false) {
     const duplicate = await NotificationJob.exists({
       channel: input.channel,
       eventType: input.eventType,
@@ -77,6 +88,20 @@ export async function processNotificationQueue(limit = 20) {
 
   for (const job of jobs) {
     try {
+      if (job.channel === "whatsapp" && !env.WHATSAPP_ENABLED) {
+        await NotificationLog.create({
+          channel: job.channel,
+          error: "WhatsApp is globally disabled",
+          eventType: job.eventType,
+          relatedEntity: job.relatedEntity,
+          status: "skipped",
+          to: job.to,
+        });
+        job.status = "skipped";
+        job.lastError = "WhatsApp is globally disabled";
+        await job.save();
+        continue;
+      }
       const rendered = await resolveTemplate(
         job.eventType,
         job.channel as NotificationChannel,
@@ -167,6 +192,7 @@ export async function resolveTemplate(
   }
 
   return {
+    attachments: payload.fallback.attachments,
     subject: interpolate(template.subject ?? payload.fallback.subject, payload.variables),
     text: interpolate(template.body, payload.variables),
   };

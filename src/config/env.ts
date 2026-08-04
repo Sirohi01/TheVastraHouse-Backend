@@ -72,6 +72,10 @@ const envSchema = z.object({
   SMTP_PASS: z.string().default(""),
   SMTP_FROM_EMAIL: z.string().default(""),
   SMTP_FROM_NAME: z.string().default("The Vastra House"),
+  COMPANY_NAME: z.string().default("The Vastra House"),
+  COMPANY_ADDRESS: z.string().default("India"),
+  COMPANY_EMAIL: z.string().default(""),
+  COMPANY_GSTIN: z.string().default(""),
   SHIPPING_STANDARD_FEE: z.coerce.number().nonnegative().default(99),
   SHIPPING_EXPRESS_FEE: z.coerce.number().nonnegative().default(199),
   SHIPPING_FREE_THRESHOLD: z.coerce.number().nonnegative().default(2999),
@@ -84,6 +88,10 @@ const envSchema = z.object({
   SEO_TWITTER_HANDLE: z.string().default(""),
   SEO_ORGANIZATION_LOGO_URL: z.string().default(""),
   SEO_ROBOTS_EXTRA_DISALLOW: z.string().default(""),
+  WHATSAPP_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
   WHATSAPP_PHONE_NUMBER_ID: z.string().default(""),
   WHATSAPP_ACCESS_TOKEN: z.string().default(""),
   WHATSAPP_API_VERSION: z.string().default("v21.0"),

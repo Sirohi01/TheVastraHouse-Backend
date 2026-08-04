@@ -18,7 +18,7 @@ import { mergeGuestCartIntoUserCart } from "../services/cartService.js";
 import { enqueueNotification } from "../services/notificationDispatchService.js";
 import { hashPassword, verifyPassword } from "../services/passwordService.js";
 import { attributeReferral } from "../services/referralService.js";
-import { issueRefreshToken, rotateRefreshToken } from "../services/refreshTokenService.js";
+import { issueRefreshToken, revokeRefreshToken, rotateRefreshToken } from "../services/refreshTokenService.js";
 import { createTotpSecret, verifyTotp } from "../services/totpService.js";
 import { env } from "../config/env.js";
 import { AppError } from "../middleware/errorHandler.js";
@@ -140,6 +140,11 @@ authRouter.post(
       if (!user) {
         await recordAdminLogin(req.body.email, false, "unknown-user", ipAddress, userAgent);
         throw new AppError("Invalid email or password", 401);
+      }
+
+      if (user.status !== "active" || user.deactivatedAt) {
+        await recordAdminLogin(user.email, false, "inactive", ipAddress, userAgent, user._id);
+        throw new AppError("Account is inactive", 403);
       }
 
       if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
@@ -303,6 +308,19 @@ authRouter.post(
 );
 
 authRouter.post(
+  "/logout",
+  validateRequest({ body: z.object({ refreshToken: z.string().min(20) }).strict() }),
+  async (req, res, next) => {
+    try {
+      await revokeRefreshToken(req.body.refreshToken);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+authRouter.post(
   "/forgot-password",
   strictAuthLimit,
   validateRequest({
@@ -400,6 +418,7 @@ authRouter.post(
 
       await enqueueNotification({
         channel: req.body.target.includes("@") ? "email" : "whatsapp",
+        consentGranted: !req.body.target.includes("@"),
         eventType: "otp",
         fallback: otpEmail,
         to: req.body.target,
@@ -470,6 +489,27 @@ authRouter.get("/me", requireAuth, async (req, res, next) => {
   }
 });
 
+authRouter.patch(
+  "/me/preferences",
+  requireAuth,
+  validateRequest({
+    body: z.object({ whatsappOptIn: z.boolean() }).strict(),
+  }),
+  async (req, res, next) => {
+    try {
+      const user = await User.findByIdAndUpdate(
+        req.user!.id,
+        { $set: { whatsappOptIn: req.body.whatsappOptIn } },
+        { new: true },
+      );
+      if (!user) throw new AppError("User not found", 404);
+      res.json({ user: serializeUser(user) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 authRouter.get("/admin/login-history", requireAuth, async (req, res, next) => {
   try {
     if (req.user?.type !== "admin") {
@@ -496,6 +536,7 @@ function serializeUser(user: {
   emailVerifiedAt?: Date;
   roleSlug?: string;
   customerType?: "retail" | "wholesale";
+  whatsappOptIn?: boolean;
 }) {
   return {
     id: String(user._id),
@@ -506,6 +547,7 @@ function serializeUser(user: {
     emailVerified: Boolean(user.emailVerifiedAt),
     roleSlug: user.roleSlug,
     customerType: user.customerType,
+    whatsappOptIn: user.whatsappOptIn ?? false,
   };
 }
 

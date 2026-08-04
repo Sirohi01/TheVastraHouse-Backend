@@ -1,4 +1,5 @@
 import { Role } from "../models/Role.js";
+import { Permission } from "../models/Permission.js";
 
 type SeedRole = {
   name: string;
@@ -24,6 +25,8 @@ const allModules = [
   "settings",
   "users",
   "audit",
+  "customers",
+  "support",
 ] as const;
 
 const manageAll = allModules.map((module) => ({ module, action: "manage" }));
@@ -102,6 +105,15 @@ export const seedRoles: SeedRole[] = [
 ];
 
 export async function seedDefaultRoles(): Promise<void> {
+  for (const module of allModules) {
+    for (const action of ["read", "manage"] as const) {
+      await Permission.updateOne(
+        { action, module },
+        { $set: { action, description: `${action} access for ${module}`, module } },
+        { upsert: true },
+      );
+    }
+  }
   for (const role of seedRoles) {
     await Role.updateOne({ slug: role.slug }, { $set: role }, { upsert: true });
   }

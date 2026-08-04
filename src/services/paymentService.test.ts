@@ -238,6 +238,7 @@ test("COD and direct UPI flows create expected payment states", async (t) => {
 
 test("manual payment rejection requires pending state and records reason", async (t) => {
   const history = patchHistoryOnly();
+  const orderCtx = patchOrderModels({ status: "payment_verification_pending" });
   const originalSessionFindById = PaymentSession.findById;
   const originalAuditCreate = AuditLog.create;
   const session = makeSession({
@@ -253,6 +254,7 @@ test("manual payment rejection requires pending state and records reason", async
     (PaymentSession as unknown as { findById: unknown }).findById = originalSessionFindById;
     (AuditLog as unknown as { create: unknown }).create = originalAuditCreate;
     history.restore();
+    orderCtx.restore();
   });
 
   const rejected = await rejectManualPayment({
@@ -264,6 +266,7 @@ test("manual payment rejection requires pending state and records reason", async
   assert.equal(rejected.status, "payment_rejected");
   assert.equal(rejected.rejectionReason, "Amount mismatch");
   assert.equal(history.events.includes("payment_rejected"), true);
+  assert.equal(orderCtx.order.status, "payment_rejected");
 });
 
 test("finalizeOrderAfterPayment confirms a pre-order, creates a production tracker, and is idempotent", async (t) => {
@@ -547,6 +550,7 @@ function patchOrderModels(overrides: Record<string, unknown> = {}) {
   const originalTimelineCreate = OrderTimeline.create;
   const timelineEvents: Array<Record<string, unknown>> = [];
   const order: Record<string, unknown> & { save: () => Promise<unknown> } = {
+    _id: new Types.ObjectId(),
     guestEmail: undefined,
     items: [],
     orderNumber: "ORDER-P10",
@@ -557,6 +561,7 @@ function patchOrderModels(overrides: Record<string, unknown> = {}) {
     stockReservations: [],
     totals: { currencyCode: "INR", grandTotal: 5000 },
     save: async () => order,
+    toObject: () => ({ ...order }),
     ...overrides,
   };
 

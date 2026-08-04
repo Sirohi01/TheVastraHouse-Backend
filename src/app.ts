@@ -19,6 +19,8 @@ import { ordersRouter } from "./routes/orders.js";
 import { preOrdersRouter } from "./routes/preOrders.js";
 import { returnsRouter } from "./routes/returns.js";
 import { settingsRouter } from "./routes/settings.js";
+import { documentsRouter } from "./routes/documents.js";
+import { accessControlRouter } from "./routes/accessControl.js";
 
 export function createApp() {
   const app = express();
@@ -46,6 +48,8 @@ export function createApp() {
   app.use(`/api/${API_VERSION}/settings`, settingsRouter);
   app.use(`/api/${API_VERSION}/notifications`, notificationsRouter);
   app.use(`/api/${API_VERSION}/loyalty`, loyaltyRouter);
+  app.use(`/api/${API_VERSION}/documents`, documentsRouter);
+  app.use(`/api/${API_VERSION}/access-control`, accessControlRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
