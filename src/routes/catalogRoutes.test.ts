@@ -83,9 +83,7 @@ test("public product list maps Phase 8 filters and best-selling sort to catalog 
     pipeline: Array<Record<string, unknown>>,
   ) => {
     filters.push(pipeline[0].$match);
-    const sortStage = pipeline.find((stage) => "$sort" in stage) as
-      | { $sort: unknown }
-      | undefined;
+    const sortStage = pipeline.find((stage) => "$sort" in stage) as { $sort: unknown } | undefined;
     if (sortStage) {
       sorts.push(sortStage.$sort);
     }
