@@ -511,7 +511,30 @@ async function listProductsWithVisibility(
       status: { $ne: "deleted" },
     };
     const [products, total] = await Promise.all([
-      Product.find(filter).sort(query.sort).skip(pagination.skip).limit(pagination.limit).lean(),
+      Product.aggregate([
+        { $match: filter },
+        {
+          $addFields: {
+            hasReadyStock: {
+              $anyElementTrue: {
+                $map: {
+                  input: "$variants",
+                  as: "variant",
+                  in: {
+                    $and: [
+                      { $ne: ["$$variant.active", false] },
+                      { $gt: [{ $ifNull: ["$$variant.stockPlaceholder", 0] }, 0] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+        { $sort: { hasReadyStock: -1, ...query.sort } },
+        { $skip: pagination.skip },
+        { $limit: pagination.limit },
+      ]),
       Product.countDocuments(filter),
     ]);
 
