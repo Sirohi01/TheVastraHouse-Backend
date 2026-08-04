@@ -42,21 +42,23 @@ function chain<T>(value: T): QueryChain<T> {
 }
 
 test("public product list forces active products and paginates storefront shape", async (t) => {
-  const originalFind = Product.find;
+  const originalAggregate = Product.aggregate;
   const originalCountDocuments = Product.countDocuments;
   const filters: unknown[] = [];
   const product = buildProductPayload();
 
-  (Product as unknown as { find: unknown }).find = (filter: unknown) => {
-    filters.push(filter);
-    return chain([product]);
+  (Product as unknown as { aggregate: unknown }).aggregate = (
+    pipeline: Array<Record<string, unknown>>,
+  ) => {
+    filters.push(pipeline[0].$match);
+    return Promise.resolve([product]);
   };
   (Product as unknown as { countDocuments: unknown }).countDocuments = (filter: unknown) => {
     filters.push(filter);
     return Promise.resolve(1);
   };
   t.after(() => {
-    (Product as unknown as { find: unknown }).find = originalFind;
+    (Product as unknown as { aggregate: unknown }).aggregate = originalAggregate;
     (Product as unknown as { countDocuments: unknown }).countDocuments = originalCountDocuments;
   });
 
@@ -72,27 +74,29 @@ test("public product list forces active products and paginates storefront shape"
 });
 
 test("public product list maps Phase 8 filters and best-selling sort to catalog query", async (t) => {
-  const originalFind = Product.find;
+  const originalAggregate = Product.aggregate;
   const originalCountDocuments = Product.countDocuments;
   const filters: unknown[] = [];
   const sorts: unknown[] = [];
 
-  (Product as unknown as { find: unknown }).find = (filter: unknown) => {
-    filters.push(filter);
-    return {
-      ...chain([buildProductPayload()]),
-      sort(sort: unknown) {
-        sorts.push(sort);
-        return this;
-      },
-    };
+  (Product as unknown as { aggregate: unknown }).aggregate = (
+    pipeline: Array<Record<string, unknown>>,
+  ) => {
+    filters.push(pipeline[0].$match);
+    const sortStage = pipeline.find((stage) => "$sort" in stage) as
+      | { $sort: unknown }
+      | undefined;
+    if (sortStage) {
+      sorts.push(sortStage.$sort);
+    }
+    return Promise.resolve([buildProductPayload()]);
   };
   (Product as unknown as { countDocuments: unknown }).countDocuments = (filter: unknown) => {
     filters.push(filter);
     return Promise.resolve(1);
   };
   t.after(() => {
-    (Product as unknown as { find: unknown }).find = originalFind;
+    (Product as unknown as { aggregate: unknown }).aggregate = originalAggregate;
     (Product as unknown as { countDocuments: unknown }).countDocuments = originalCountDocuments;
   });
 
@@ -112,7 +116,10 @@ test("public product list maps Phase 8 filters and best-selling sort to catalog 
     active: true,
     status: { $ne: "deleted" },
   });
-  assert.deepEqual(sorts[0], { "merchandisingMetrics.unitsSold30d": -1 });
+  assert.deepEqual(sorts[0], {
+    hasActivePreOrder: 1,
+    "merchandisingMetrics.unitsSold30d": -1,
+  });
 });
 
 test("product detail by slug returns only active products with storefront fields", async (t) => {
