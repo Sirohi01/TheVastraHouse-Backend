@@ -515,23 +515,37 @@ async function listProductsWithVisibility(
         { $match: filter },
         {
           $addFields: {
-            hasReadyStock: {
-              $anyElementTrue: {
-                $map: {
-                  input: "$variants",
-                  as: "variant",
-                  in: {
-                    $and: [
-                      { $ne: ["$$variant.active", false] },
-                      { $gt: [{ $ifNull: ["$$variant.stockPlaceholder", 0] }, 0] },
-                    ],
+            hasActivePreOrder: {
+              $anyElementTrue: [
+                {
+                  $map: {
+                    input: "$variants",
+                    as: "variant",
+                    in: {
+                      $and: [
+                        { $eq: ["$$variant.preOrder.enabled", true] },
+                        {
+                          $or: [
+                            { $eq: ["$$variant.preOrder.startAt", null] },
+                            { $lte: ["$$variant.preOrder.startAt", "$$NOW"] },
+                          ],
+                        },
+                        {
+                          $or: [
+                            { $eq: ["$$variant.preOrder.endAt", null] },
+                            { $gte: ["$$variant.preOrder.endAt", "$$NOW"] },
+                          ],
+                        },
+                        { $gt: [{ $ifNull: ["$$variant.preOrder.remainingQuantity", 0] }, 0] },
+                      ],
+                    },
                   },
                 },
-              },
+              ],
             },
           },
         },
-        { $sort: { hasReadyStock: -1, ...query.sort } },
+        { $sort: { hasActivePreOrder: 1, ...query.sort } },
         { $skip: pagination.skip },
         { $limit: pagination.limit },
       ]),
