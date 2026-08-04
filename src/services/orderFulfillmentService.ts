@@ -156,7 +156,7 @@ async function deductPendingReservations(order: FulfillableOrder, actor: OrderAc
 
 export async function sendOrderConfirmationEmail(
   input: { guestEmail?: string; shippingAddress?: { fullName?: string } },
-  order: { orderNumber: string; totals: { grandTotal: number; currencyCode: string } },
+  order: { _id?: unknown; orderNumber: string; totals: { grandTotal: number; currencyCode: string } },
   payableNow: number,
 ) {
   const email = input.guestEmail;
@@ -181,6 +181,7 @@ export async function sendOrderConfirmationEmail(
     channel: "email",
     eventType: "order_confirmation",
     fallback: buildOrderConfirmationTemplate(variables),
+    relatedEntity: order._id ? { id: String(order._id), type: "order" } : undefined,
     to: email,
     variables,
   });
@@ -188,6 +189,7 @@ export async function sendOrderConfirmationEmail(
 
 export async function sendBalancePaymentReceivedEmail(
   order: {
+    _id?: unknown;
     orderNumber: string;
     guestEmail?: string;
     shippingAddress?: { fullName?: string };
@@ -212,6 +214,7 @@ export async function sendBalancePaymentReceivedEmail(
     channel: "email",
     eventType: "balance_payment_received",
     fallback: buildBalancePaymentReceivedTemplate(variables),
+    relatedEntity: order._id ? { id: String(order._id), type: "order" } : undefined,
     to: email,
     variables,
   });

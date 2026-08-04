@@ -330,6 +330,22 @@ test("finalizeOrderAfterPayment does not misfire a balance-received notification
   assert.equal(orderCtx.timelineEvents.length, 1);
 });
 
+test("finalizeOrderAfterPayment confirms a secured-COD order only after advance capture", async (t) => {
+  const orderCtx = patchOrderModels({ paymentMethod: "cod", paymentMode: "advance" });
+  t.after(orderCtx.restore);
+
+  const result = await finalizeOrderAfterPayment({
+    actor: { actorType: "system" as const },
+    outstandingAmount: 2500,
+    payableNow: 2500,
+    paymentSessionId: new Types.ObjectId(),
+    paymentSessionStatus: "partially_paid",
+  });
+
+  assert.equal(result?.status, "cod_confirmed");
+  assert.equal(orderCtx.timelineEvents.length, 1);
+});
+
 test("finalizeOrderAfterPayment notifies once when an advance order's balance is fully paid", async (t) => {
   const orderCtx = patchOrderModels({
     paymentMode: "advance",
@@ -395,6 +411,44 @@ test("createBalancePaymentForOrder reuses the existing session to collect the ou
   assert.equal(history.events.includes("razorpay_balance_order_created"), true);
 });
 
+test("payment retry preserves the original secured-COD advance amount", async (t) => {
+  const history = patchHistoryOnly();
+  const originalOrderFindOne = Order.findOne;
+  const originalSessionFindById = PaymentSession.findById;
+  const session = makeSession({
+    amount: 5000,
+    method: "razorpay",
+    orderReference: "ORDER-COD-RETRY",
+    outstandingAmount: 5000,
+    paidAmount: 0,
+    payableNow: 2500,
+    paymentMode: "advance",
+  });
+  const order = {
+    orderNumber: "ORDER-COD-RETRY",
+    paymentSessionId: session._id,
+    status: "pending_payment",
+    userId: new Types.ObjectId(),
+  };
+  (Order as unknown as { findOne: unknown }).findOne = () => Promise.resolve(order);
+  (PaymentSession as unknown as { findById: unknown }).findById = () => Promise.resolve(session);
+  t.after(() => {
+    (Order as unknown as { findOne: unknown }).findOne = originalOrderFindOne;
+    (PaymentSession as unknown as { findById: unknown }).findById = originalSessionFindById;
+    history.restore();
+  });
+
+  const result = await createBalancePaymentForOrder({
+    orderNumber: order.orderNumber,
+    userId: String(order.userId),
+  });
+
+  assert.equal(result.gatewayOrder.amount, 250000);
+  assert.equal(result.session.payableNow, 2500);
+  assert.equal(result.session.paymentMode, "advance");
+  assert.equal(history.events.includes("razorpay_payment_retried"), true);
+});
+
 test("createBalancePaymentForOrder rejects when the order has no outstanding balance", async (t) => {
   const history = patchHistoryOnly();
   const originalOrderFindOne = Order.findOne;
@@ -434,6 +488,7 @@ test("createBalancePaymentForOrder requires a matching guest email for guest che
   const session = makeSession({
     method: "razorpay",
     outstandingAmount: 2000,
+    paidAmount: 1000,
     status: "partially_paid",
   });
   const order = {
@@ -495,6 +550,7 @@ function patchOrderModels(overrides: Record<string, unknown> = {}) {
     guestEmail: undefined,
     items: [],
     orderNumber: "ORDER-P10",
+    paymentMethod: "razorpay",
     paymentMode: "full",
     shippingAddress: undefined,
     status: "pending_payment",

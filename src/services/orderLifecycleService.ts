@@ -2,16 +2,24 @@ import { Types, type HydratedDocument } from "mongoose";
 import { AppError } from "../middleware/errorHandler.js";
 import { Order, type orderStatuses } from "../models/Order.js";
 import { OrderTimeline } from "../models/OrderTimeline.js";
+import { PaymentSession } from "../models/PaymentSession.js";
 import { writeAuditLog } from "./auditLogService.js";
 import { releaseOrderStock } from "./inventoryService.js";
+import { releasePreOrderSlots } from "./preOrderService.js";
 
 export type OrderStatus = (typeof orderStatuses)[number];
 
 type OrderDoc = HydratedDocument<{
   _id: Types.ObjectId;
   orderNumber: string;
+  paymentSessionId?: Types.ObjectId;
   userId: Types.ObjectId;
   status: OrderStatus;
+  items: Array<{
+    variantId: Types.ObjectId;
+    quantity: number;
+    preOrder?: { enabled?: boolean };
+  }>;
   shipment?: {
     carrier?: string;
     trackingNumber?: string;
@@ -48,6 +56,39 @@ export const orderTransitionGraph: Record<OrderStatus, OrderStatus[]> = {
   cancelled: [],
   refunded: [],
 };
+
+const pendingPaymentTimeoutMs = 30 * 60 * 1000;
+
+export function startPendingPaymentCleanupJob(intervalMs = 5 * 60 * 1000) {
+  const run = () => void cancelExpiredPendingPaymentOrders().catch(() => undefined);
+  run();
+  return setInterval(run, intervalMs);
+}
+
+export async function cancelExpiredPendingPaymentOrders(now = new Date()) {
+  const cutoff = new Date(now.getTime() - pendingPaymentTimeoutMs);
+  const orders = (await Order.find({
+    createdAt: { $lte: cutoff },
+    status: "pending_payment",
+  }).limit(100)) as unknown as OrderDoc[];
+  let cancelled = 0;
+
+  for (const order of orders) {
+    await transitionOrderDocument(order, {
+      actor: { actorType: "system" },
+      note: "Payment window expired",
+      toStatus: "cancelled",
+    });
+    if (order.paymentSessionId) {
+      await PaymentSession.findByIdAndUpdate(order.paymentSessionId, {
+        $set: { failedAt: now, status: "failed" },
+      });
+    }
+    cancelled += 1;
+  }
+
+  return { cancelled };
+}
 
 const customerCancelableStatuses = new Set<OrderStatus>([
   "pending_payment",
@@ -328,5 +369,12 @@ async function releaseStockForCancellation(order: OrderDoc, actor: OrderActor) {
 
   for (const reservation of order.stockReservations) {
     reservation.status = "released";
+  }
+
+  const preOrderItems = (order.items ?? [])
+    .filter((item) => item.preOrder?.enabled)
+    .map((item) => ({ quantity: item.quantity, variantId: item.variantId }));
+  if (preOrderItems.length) {
+    await releasePreOrderSlots(preOrderItems);
   }
 }

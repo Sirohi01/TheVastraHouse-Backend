@@ -28,6 +28,7 @@ type OrderDoc = HydratedDocument<{
   orderNumber: string;
   userId: Types.ObjectId;
   paymentSessionId?: Types.ObjectId;
+  paymentMethod: "razorpay" | "cod" | "manual_bank_transfer" | "upi";
   status: OrderStatus;
   shipment?: { deliveredAt?: Date };
   totals: { grandTotal: number; currencyCode: string };
@@ -120,9 +121,9 @@ export async function approveReturn(input: {
     throw new AppError("Payment session not found", 404);
   }
 
-  assertRefundMethodEligible(paymentSession.method, input.refundMethod);
+  assertRefundMethodEligible(order.paymentMethod, input.refundMethod);
   const requestedAmount = input.refundAmount ?? sumReturnAmount(returnRequest.items);
-  const maxRefundable = refundableAmount(paymentSession);
+  const maxRefundable = refundableAmount(order, paymentSession);
 
   if (requestedAmount <= 0 || requestedAmount > maxRefundable) {
     throw new AppError("Refund amount exceeds eligible paid amount", 400);
@@ -131,11 +132,14 @@ export async function approveReturn(input: {
   await routeReturnedStock(returnRequest, input.stockDisposition, input.actor);
 
   if (order.status === "delivered") {
-    await transitionOrderDocument(order as Parameters<typeof transitionOrderDocument>[0], {
-      actor: input.actor,
-      note: input.note ?? "Return approved",
-      toStatus: "returned",
-    });
+    await transitionOrderDocument(
+      order as unknown as Parameters<typeof transitionOrderDocument>[0],
+      {
+        actor: input.actor,
+        note: input.note ?? "Return approved",
+        toStatus: "returned",
+      },
+    );
   }
 
   const refund = await Refund.create({
@@ -173,7 +177,7 @@ export async function approveReturn(input: {
     amount: refund.amount,
     currencyCode: refund.currencyCode,
     event: "refund_processed",
-    method: paymentSession.method,
+    method: order.paymentMethod,
     metadata: {
       refundId: String(refund._id),
       refundMethod: input.refundMethod,
@@ -194,11 +198,14 @@ export async function approveReturn(input: {
   await returnRequest.save();
 
   if (order.status === "returned") {
-    await transitionOrderDocument(order as Parameters<typeof transitionOrderDocument>[0], {
-      actor: input.actor,
-      note: "Refund processed",
-      toStatus: "refunded",
-    });
+    await transitionOrderDocument(
+      order as unknown as Parameters<typeof transitionOrderDocument>[0],
+      {
+        actor: input.actor,
+        note: "Refund processed",
+        toStatus: "refunded",
+      },
+    );
   }
 
   await writeAuditLog({
@@ -377,7 +384,11 @@ function sumReturnAmount(items: Array<{ lineSubtotal: number }>) {
   return Math.round(items.reduce((total, item) => total + item.lineSubtotal, 0) * 100) / 100;
 }
 
-function refundableAmount(paymentSession: PaymentSessionDoc) {
+function refundableAmount(order: OrderDoc, paymentSession: PaymentSessionDoc) {
+  if (order.paymentMethod === "cod" && order.status === "delivered") {
+    return order.totals.grandTotal;
+  }
+
   if (paymentSession.paidAmount > 0) {
     return paymentSession.paidAmount;
   }

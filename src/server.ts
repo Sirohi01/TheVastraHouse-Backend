@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { startMerchandisingBadgeJob } from "./services/merchandisingBadgeService.js";
 import { startAbandonedCartJob, startWishlistSignalJob } from "./services/cartService.js";
 import { startNotificationDispatchJob } from "./services/notificationDispatchService.js";
+import { startPendingPaymentCleanupJob } from "./services/orderLifecycleService.js";
 import { seedDefaultRoles } from "./services/roleSeedService.js";
 import { logger } from "./utils/logger.js";
 
@@ -31,6 +32,7 @@ async function bootstrap() {
   const abandonedCartJob = startAbandonedCartJob();
   const wishlistSignalJob = startWishlistSignalJob();
   const notificationDispatchJob = startNotificationDispatchJob();
+  const pendingPaymentCleanupJob = startPendingPaymentCleanupJob();
 
   const shutdown = (signal: NodeJS.Signals) => {
     logger.info({ signal }, "Shutting down backend server");
@@ -38,6 +40,7 @@ async function bootstrap() {
     clearInterval(abandonedCartJob);
     clearInterval(wishlistSignalJob);
     clearInterval(notificationDispatchJob);
+    clearInterval(pendingPaymentCleanupJob);
     server.close(() => {
       process.exit(0);
     });

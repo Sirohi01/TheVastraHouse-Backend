@@ -148,6 +148,7 @@ checkoutRouter.post(
     try {
       const result = await createBalancePaymentForOrder({
         guestEmail: req.body.guestEmail,
+        guestSessionId: req.header("X-Guest-Session-Id"),
         orderNumber: String(req.params.orderNumber),
         userId: req.user?.id,
       });
@@ -160,9 +161,14 @@ checkoutRouter.post(
 
 checkoutRouter.get("/orders/:orderNumber", async (req, res, next) => {
   try {
+    const guestSessionId = req.header("X-Guest-Session-Id");
+    if (!req.user?.id && !guestSessionId) {
+      res.status(401).json({ error: { message: "Authentication or guest session is required" } });
+      return;
+    }
     const order = (await Order.findOne({
       orderNumber: req.params.orderNumber,
-      ...(req.user?.id ? { userId: req.user.id } : {}),
+      ...(req.user?.id ? { userId: req.user.id } : { guestSessionId }),
     }).lean()) as { paymentSessionId?: unknown } | null;
 
     if (!order) {

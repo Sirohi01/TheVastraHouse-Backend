@@ -11,7 +11,6 @@ import {
   releaseOrderStock,
   reserveOrderStock,
 } from "./inventoryService.js";
-import { sendOrderConfirmationEmail } from "./orderFulfillmentService.js";
 import {
   assertPreOrderWindow,
   isPreOrderActive,
@@ -249,10 +248,6 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     subtotal: 0,
   };
   await cart.save();
-  if (input.paymentMethod !== "razorpay") {
-    await sendOrderConfirmationEmail(input, order, payableNow);
-  }
-
   return { gatewayOrder: payment.gatewayOrder, order, paymentSession: payment.session ?? payment };
 }
 

@@ -256,8 +256,8 @@ Every phase from [07-project-phases.md](07-project-phases.md) is decomposed into
 3. Implement pre-order availability-window enforcement (storefront query + checkout validation).
 4. Implement pre-order quantity-cap enforcement with atomic/race-safe decrement.
 5. Implement auto-close logic when cap reached or end-date passed (scheduled job).
-6. Implement advance-payment checkout path (integrates Phase 10 partial-payment capture).
-7. Implement full-payment checkout path for pre-orders.
+6. Implement secured-COD checkout path with a server-calculated 50% Razorpay advance.
+7. Implement full Razorpay payment path for pre-orders.
 8. Build storefront Pre-Order listing page.
 9. Build PDP pre-order panel (dates, payment mode, remaining quantity indicator).
 10. Design Production Tracker schema (order/item ref, current stage, stage history).

@@ -28,7 +28,7 @@ Functional requirements are grouped by module. Each is written as a system capab
 
 ### 7.3 Pre-Order System
 - FR-PRE-01: The system shall allow any product/variant to be flagged Pre-Order with start date, end date, expected dispatch date, and expected delivery date.
-- FR-PRE-02: The system shall support advance-payment and full-payment pre-order modes, configurable per product.
+- FR-PRE-02: Pre-order payment shall follow the checkout payment method: Razorpay collects the full order value, while COD requires a 50% Razorpay advance and leaves 50% payable on delivery. Customers and product admins cannot override this rule.
 - FR-PRE-03: The system shall enforce a limited-quantity cap on pre-order SKUs and close ordering automatically when reached or end date passes.
 - FR-PRE-04: The system shall expose a Production Tracker per pre-order item with stages: Order Received → Fabric Sourcing → Cutting → Printing → Stitching → Finishing → Quality Check → Packaging → Dispatch.
 - FR-PRE-05: The system shall notify the customer (email/WhatsApp) on each production stage transition.
@@ -44,11 +44,11 @@ Functional requirements are grouped by module. Each is written as a system capab
 - FR-CART-07: The system shall trigger an Abandoned Cart event (for marketing automation) when a cart with items is inactive beyond a configurable threshold.
 
 ### 7.5 Payments
-- FR-PAY-01: The system shall support Razorpay (cards/netbanking/UPI via gateway), COD, Manual Bank Transfer, and direct UPI as payment methods.
+- FR-PAY-01: The v1 customer checkout shall support Razorpay full payment and secured COD. Secured COD requires a 50% Razorpay advance before the order is confirmed; the balance is payable on delivery. Manual Bank Transfer and direct UPI remain operational/admin capabilities but are not exposed in the v1 customer checkout.
 - FR-PAY-02: For Manual Payment, the system shall allow customer upload of a payment screenshot and place the order in "Payment Verification Pending" status.
 - FR-PAY-03: The system shall allow Order Manager/Admin to Approve or Reject a manual payment with a mandatory reason on rejection, transitioning order status accordingly.
 - FR-PAY-04: The system shall maintain a complete Payment History per order, including gateway transaction IDs, verification actor, and timestamps.
-- FR-PAY-05: The system shall support partial payment capture for pre-orders (advance now, balance before dispatch) and track the outstanding balance.
+- FR-PAY-05: The system shall track paid and outstanding balances for secured COD orders. The server, not the client, calculates the 50% advance from the final checkout total.
 - FR-PAY-06: The system shall reconcile Razorpay webhook events idempotently against order payment status.
 
 ### 7.6 Order Management

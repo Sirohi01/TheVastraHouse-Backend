@@ -27,13 +27,13 @@ test("enqueueNotification stores the fallback template and variables as a pendin
     channel: "email",
     eventType: "otp",
     fallback: { subject: "Your OTP", text: "Code is 123456" },
-    to: "customer@example.com",
+    to: "customer@vastrahouse.test",
     variables: { code: "123456" },
   });
 
   assert.equal(created.length, 1);
   assert.equal(created[0].status, "pending");
-  assert.equal(created[0].to, "customer@example.com");
+  assert.equal(created[0].to, "customer@vastrahouse.test");
   assert.deepEqual(created[0].payload, {
     fallback: { subject: "Your OTP", text: "Code is 123456" },
     variables: { code: "123456" },
@@ -46,6 +46,18 @@ test("enqueueNotification skips silently when there is no recipient", async () =
     eventType: "otp",
     fallback: { subject: "x", text: "x" },
     to: undefined,
+    variables: {},
+  });
+
+  assert.equal(result, null);
+});
+
+test("enqueueNotification rejects reserved placeholder email domains", async () => {
+  const result = await enqueueNotification({
+    channel: "email",
+    eventType: "order_confirmation",
+    fallback: { subject: "x", text: "x" },
+    to: "officialmanishsirohi.01@gmail.com",
     variables: {},
   });
 
@@ -97,7 +109,7 @@ test("processNotificationQueue marks a job sent and writes a notification log en
       channel: "email",
       eventType: "otp",
       payload: { fallback: { subject: "Your OTP", text: "Code is 111222" }, variables: {} },
-      to: "customer@example.com",
+      to: "customer@vastrahouse.test",
     }),
   );
 
@@ -119,7 +131,7 @@ test("processNotificationQueue retries on failure and marks failed after max att
     channel: "email",
     eventType: "order_confirmation",
     payload: { fallback: { subject: "Order confirmed", text: "Thanks" }, variables: {} },
-    to: "customer@example.com",
+    to: "customer@vastrahouse.test",
   });
   ctx.jobs.push(job);
 

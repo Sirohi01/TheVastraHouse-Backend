@@ -119,17 +119,22 @@ export async function createBalancePaymentForOrder(input: {
   orderNumber: string;
   userId?: string;
   guestEmail?: string;
+  guestSessionId?: string;
 }) {
   const order = await Order.findOne({
     orderNumber: input.orderNumber,
-    ...(input.userId ? { userId: input.userId } : {}),
+    ...(input.userId
+      ? { userId: input.userId }
+      : input.guestSessionId
+        ? { guestSessionId: input.guestSessionId }
+        : {}),
   });
 
   if (!order) {
     throw new AppError("Order not found", 404);
   }
 
-  if (!input.userId) {
+  if (!input.userId && !input.guestSessionId) {
     const normalizedEmail = input.guestEmail?.trim().toLowerCase();
     if (!normalizedEmail || order.guestEmail !== normalizedEmail) {
       throw new AppError("Order not found", 404);
@@ -146,6 +151,10 @@ export async function createBalancePaymentForOrder(input: {
     throw new AppError("Payment session not found", 404);
   }
 
+  if (session.paidAmount === 0 && order.status !== "pending_payment") {
+    throw new AppError("The initial payment window for this order is closed", 409);
+  }
+
   if (session.method !== "razorpay") {
     throw new AppError("Balance payment is only supported for Razorpay orders", 409);
   }
@@ -154,19 +163,28 @@ export async function createBalancePaymentForOrder(input: {
     throw new AppError("This order has no outstanding balance", 409);
   }
 
+  const isInitialRetry = session.paidAmount === 0;
+  const amountToCollect = isInitialRetry ? session.payableNow : session.outstandingAmount;
   const gatewayOrder = await createRazorpayGatewayOrder({
-    amount: session.outstandingAmount,
+    amount: amountToCollect,
     currencyCode: session.currencyCode,
     receipt: `${order.orderNumber}-BAL`,
   });
 
-  session.payableNow = session.outstandingAmount;
-  session.paymentMode = "balance";
+  session.payableNow = amountToCollect;
+  if (!isInitialRetry) {
+    session.paymentMode = "balance";
+  }
   session.razorpayOrderId = gatewayOrder.id;
   await session.save();
-  await recordPaymentHistory(session, "razorpay_balance_order_created", "customer", {
-    gatewayOrder,
-  });
+  await recordPaymentHistory(
+    session,
+    isInitialRetry ? "razorpay_payment_retried" : "razorpay_balance_order_created",
+    "customer",
+    {
+      gatewayOrder,
+    },
+  );
 
   return { gatewayOrder, order, session };
 }

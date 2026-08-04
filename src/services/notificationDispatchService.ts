@@ -23,8 +23,23 @@ export async function enqueueNotification(input: {
   fallback: NotificationFallback;
   relatedEntity?: { type: string; id?: string };
 }) {
-  if (!input.to) {
+  const recipient = input.to?.trim().toLowerCase();
+  if (!recipient || isPlaceholderRecipient(recipient)) {
+    if (recipient) {
+      logger.warn({ eventType: input.eventType, to: recipient }, "Placeholder email rejected");
+    }
     return null;
+  }
+
+  if (input.relatedEntity?.id) {
+    const duplicate = await NotificationJob.exists({
+      channel: input.channel,
+      eventType: input.eventType,
+      "relatedEntity.id": new Types.ObjectId(input.relatedEntity.id),
+      "relatedEntity.type": input.relatedEntity.type,
+      to: recipient,
+    });
+    if (duplicate) return null;
   }
 
   return NotificationJob.create({
@@ -39,8 +54,13 @@ export async function enqueueNotification(input: {
         }
       : undefined,
     status: "pending",
-    to: input.to,
+    to: recipient,
   });
+}
+
+function isPlaceholderRecipient(email: string) {
+  const domain = email.split("@")[1];
+  return domain === "example.com" || domain === "example.net" || domain === "example.org";
 }
 
 export async function processNotificationQueue(limit = 20) {

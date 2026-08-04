@@ -293,6 +293,7 @@ function customerOrderSummary(order: Record<string, unknown>) {
   return {
     _id: order._id,
     createdAt: order.createdAt,
+    items: order.items,
     orderNumber: order.orderNumber,
     shipment: order.shipment,
     status: order.status,

@@ -10,6 +10,10 @@ import {
 } from "./runtimeSettingsService.js";
 
 export async function sendEmail(to: string, template: AuthEmailTemplate) {
+  if (env.NODE_ENV === "test" || process.env.NODE_TEST_CONTEXT) {
+    return { skipped: true };
+  }
+
   const settings = await smtpSettings();
 
   if (!settings.host || !settings.fromEmail) {
