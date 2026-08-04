@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ProductionOrder } from "../models/ProductionOrder.js";
-import {
-  calculateProductionCosting,
-  updateProductionOrderStage,
-} from "./manufacturingService.js";
+import { calculateProductionCosting, updateProductionOrderStage } from "./manufacturingService.js";
 
 test("manufacturing costing totals all five categories and computes batch margin", () => {
   const result = calculateProductionCosting({

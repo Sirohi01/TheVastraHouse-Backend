@@ -86,12 +86,15 @@ export async function createProductionOrder(input: {
   }
 }
 
-export async function updateProductionOrderStage(input: {
-  id: string;
-  stage: ProductionStage;
-  actorId: string;
-  note?: string;
-}, trackerUpdater: typeof updateProductionStage = updateProductionStage) {
+export async function updateProductionOrderStage(
+  input: {
+    id: string;
+    stage: ProductionStage;
+    actorId: string;
+    note?: string;
+  },
+  trackerUpdater: typeof updateProductionStage = updateProductionStage,
+) {
   const productionOrder = await ProductionOrder.findById(input.id);
   if (!productionOrder) throw new AppError("Production order not found", 404);
   const trackerIds = (productionOrder.trackerIds as Types.ObjectId[]).map(String);
