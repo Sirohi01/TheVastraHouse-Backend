@@ -19,7 +19,17 @@ type OrderSnapshot = {
   orderNumber: string;
   billingAddress?: unknown;
   shippingAddress?: unknown;
-  items: Array<{ productName: string; sku: string; hsnCode: string; gstRate: number; quantity: number; unitPrice: number; taxableAmount: number; gstAmount: number; lineSubtotal: number }>;
+  items: Array<{
+    productName: string;
+    sku: string;
+    hsnCode: string;
+    gstRate: number;
+    quantity: number;
+    unitPrice: number;
+    taxableAmount: number;
+    gstAmount: number;
+    lineSubtotal: number;
+  }>;
   taxBreakdown: unknown[];
   totals: Record<string, unknown> & { grandTotal: number; currencyCode: string };
 };
@@ -28,12 +38,26 @@ type PdfSnapshot = {
   currencyCode: string;
   documentNumber: string;
   issuedAt: Date;
-  lines: Array<{ productName: string; sku: string; hsnCode?: string; gstRate: number; quantity: number; unitPrice: number; lineTotal: number }>;
+  lines: Array<{
+    productName: string;
+    sku: string;
+    hsnCode?: string;
+    gstRate: number;
+    quantity: number;
+    unitPrice: number;
+    lineTotal: number;
+  }>;
   orderNumber: string;
   totals: Record<string, unknown> & { grandTotal: number };
   type: DocumentType;
 };
-type StoredDocument = { _id: unknown; customerEmail?: string; documentNumber: string; orderNumber: string; type: string };
+type StoredDocument = {
+  _id: unknown;
+  customerEmail?: string;
+  documentNumber: string;
+  orderNumber: string;
+  type: string;
+};
 
 export async function generateOrderDocument(input: {
   orderId: unknown;
@@ -116,8 +140,17 @@ export async function generateReturnDocuments(input: {
     generateOrderDocument({ ...common, type: "credit_note" }),
     generateOrderDocument({ ...common, type: "return_invoice" }),
   ])
-    .then(() => ReturnRequest.findByIdAndUpdate(input.returnRequestId, { $set: { creditNoteStatus: "generated" } }))
-    .catch((error) => logger.warn({ error, returnRequestId: input.returnRequestId }, "Return document generation failed; reconciliation will retry"));
+    .then(() =>
+      ReturnRequest.findByIdAndUpdate(input.returnRequestId, {
+        $set: { creditNoteStatus: "generated" },
+      }),
+    )
+    .catch((error) =>
+      logger.warn(
+        { error, returnRequestId: input.returnRequestId },
+        "Return document generation failed; reconciliation will retry",
+      ),
+    );
   return [];
 }
 
@@ -126,21 +159,42 @@ export async function generateConfirmationDocuments(orderId: unknown) {
   void Promise.all([
     generateOrderDocument({ orderId, type: "tax_invoice" }),
     generateOrderDocument({ orderId, type: "receipt" }),
-  ]).catch((error) => logger.warn({ error, orderId }, "Confirmation document generation failed; reconciliation will retry"));
+  ]).catch((error) =>
+    logger.warn(
+      { error, orderId },
+      "Confirmation document generation failed; reconciliation will retry",
+    ),
+  );
   return [];
 }
 
 export async function generateDispatchDocument(orderId: unknown) {
   if (isTestRuntime()) return null;
   void generateOrderDocument({ orderId, type: "delivery_challan" }).catch((error) =>
-    logger.warn({ error, orderId }, "Dispatch document generation failed; reconciliation will retry"),
+    logger.warn(
+      { error, orderId },
+      "Dispatch document generation failed; reconciliation will retry",
+    ),
   );
   return null;
 }
 
 export async function reconcileOrderDocuments() {
   const orders = await Order.find({
-    status: { $in: ["confirmed", "pre_order_confirmed", "cod_confirmed", "in_production", "packed", "ready_to_dispatch", "shipped", "delivered", "returned", "refunded"] },
+    status: {
+      $in: [
+        "confirmed",
+        "pre_order_confirmed",
+        "cod_confirmed",
+        "in_production",
+        "packed",
+        "ready_to_dispatch",
+        "shipped",
+        "delivered",
+        "returned",
+        "refunded",
+      ],
+    },
   })
     .select("_id status")
     .limit(100)
@@ -149,7 +203,8 @@ export async function reconcileOrderDocuments() {
   let failed = 0;
   for (const order of orders as unknown as Array<{ _id: unknown; status: string }>) {
     const types: DocumentType[] = ["tax_invoice", "receipt"];
-    if (["shipped", "delivered", "returned", "refunded"].includes(order.status)) types.push("delivery_challan");
+    if (["shipped", "delivered", "returned", "refunded"].includes(order.status))
+      types.push("delivery_challan");
     for (const type of types) {
       try {
         await generateOrderDocument({ orderId: order._id, type });
@@ -184,7 +239,10 @@ export async function reconcileOrderDocuments() {
       } catch (error) {
         failed += 1;
         returnDocumentsFailed = true;
-        logger.warn({ error, returnRequestId: returnRequest._id, type }, "Return document reconciliation item failed");
+        logger.warn(
+          { error, returnRequestId: returnRequest._id, type },
+          "Return document reconciliation item failed",
+        );
       }
     }
     if (!returnDocumentsFailed) {
@@ -197,16 +255,19 @@ export async function reconcileOrderDocuments() {
 }
 
 export function startDocumentReconciliationJob(intervalMs = 10 * 60 * 1000) {
-  const run = () => void reconcileOrderDocuments().catch((error) => logger.warn({ error }, "Document reconciliation failed"));
+  const run = () =>
+    void reconcileOrderDocuments().catch((error) =>
+      logger.warn({ error }, "Document reconciliation failed"),
+    );
   const timer = setInterval(run, intervalMs);
   timer.unref();
   return timer;
 }
 
 export async function resendOrderDocument(documentId: string, to?: string) {
-  const document = (await OrderDocument.findById(documentId)
-    .select("+pdf.data")
-    .lean()) as (StoredDocument & { pdf?: { data?: Buffer } }) | null;
+  const document = (await OrderDocument.findById(documentId).select("+pdf.data").lean()) as
+    | (StoredDocument & { pdf?: { data?: Buffer } })
+    | null;
   if (!document) throw new AppError("Document not found", 404);
   const recipient = to?.trim().toLowerCase() || document.customerEmail;
   if (!recipient) throw new AppError("Customer email is unavailable", 409);
@@ -272,7 +333,8 @@ export async function renderDocumentPdf(snapshot: PdfSnapshot) {
 function renderHtml(value: PdfSnapshot) {
   const lines = value.lines
     .map(
-      (line) => `<tr><td>${escapeHtml(line.productName)}</td><td>${escapeHtml(line.sku)}</td><td>${escapeHtml(line.hsnCode ?? "-")}</td><td>${line.quantity}</td><td>${formatMoney(line.unitPrice, value.currencyCode)}</td><td>${line.gstRate}%</td><td>${formatMoney(line.lineTotal, value.currencyCode)}</td></tr>`,
+      (line) =>
+        `<tr><td>${escapeHtml(line.productName)}</td><td>${escapeHtml(line.sku)}</td><td>${escapeHtml(line.hsnCode ?? "-")}</td><td>${line.quantity}</td><td>${formatMoney(line.unitPrice, value.currencyCode)}</td><td>${line.gstRate}%</td><td>${formatMoney(line.lineTotal, value.currencyCode)}</td></tr>`,
     )
     .join("");
   return `<!doctype html><html><head><meta charset="utf-8"><style>body{font:12px Arial;color:#2c231d;padding:28px}header{border-bottom:3px solid #8b1e2d;margin-bottom:24px;padding-bottom:12px}h1{color:#8b1e2d;margin:0}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f6f3ee}.total{text-align:right;font-size:16px;margin-top:20px}</style></head><body><header><h1>${escapeHtml(value.company.name)}</h1><p>${escapeHtml(value.company.address)}<br>GSTIN: ${escapeHtml(value.company.gstin || "Not configured")}</p></header><h2>${title(value.type)}</h2><p><strong>Document:</strong> ${escapeHtml(value.documentNumber)}<br><strong>Order:</strong> ${escapeHtml(value.orderNumber)}<br><strong>Issued:</strong> ${new Date(value.issuedAt).toLocaleDateString("en-IN")}</p><table><thead><tr><th>Item</th><th>SKU</th><th>HSN</th><th>Qty</th><th>Rate</th><th>GST</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table><p class="total"><strong>Grand total: ${formatMoney(value.totals.grandTotal, value.currencyCode)}</strong></p></body></html>`;
@@ -288,14 +350,38 @@ async function companySnapshot() {
 }
 
 async function documentPrefix(type: DocumentType) {
-  const defaults = { tax_invoice: "INV", proforma_invoice: "PRO", receipt: "RCT", credit_note: "CN", debit_note: "DN", delivery_challan: "DC", return_invoice: "RET" } as const;
+  const defaults = {
+    tax_invoice: "INV",
+    proforma_invoice: "PRO",
+    receipt: "RCT",
+    credit_note: "CN",
+    debit_note: "DN",
+    delivery_challan: "DC",
+    return_invoice: "RET",
+  } as const;
   const key = `DOCUMENT_PREFIX_${type.toUpperCase()}`;
   return (await getRuntimeSetting(key)) || defaults[type];
 }
 function title(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
-function money(value: number) { return Math.round(value * 100) / 100; }
-function formatMoney(value: number, currency: string) { return new Intl.NumberFormat("en-IN", { style: "currency", currency }).format(value); }
-function escapeHtml(value: string) { return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char] ?? char); }
-function isTestRuntime() { return env.NODE_ENV === "test" || Boolean(process.env.NODE_TEST_CONTEXT) || process.env.npm_lifecycle_event === "test"; }
+function money(value: number) {
+  return Math.round(value * 100) / 100;
+}
+function formatMoney(value: number, currency: string) {
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency }).format(value);
+}
+function escapeHtml(value: string) {
+  return String(value).replace(
+    /[&<>'"]/g,
+    (char) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char] ?? char,
+  );
+}
+function isTestRuntime() {
+  return (
+    env.NODE_ENV === "test" ||
+    Boolean(process.env.NODE_TEST_CONTEXT) ||
+    process.env.npm_lifecycle_event === "test"
+  );
+}

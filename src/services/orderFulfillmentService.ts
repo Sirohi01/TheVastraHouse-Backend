@@ -167,7 +167,11 @@ export async function sendOrderConfirmationEmail(
     shippingAddress?: { fullName?: string; phone?: string };
     whatsappOptIn?: boolean;
   },
-  order: { _id?: unknown; orderNumber: string; totals: { grandTotal: number; currencyCode: string } },
+  order: {
+    _id?: unknown;
+    orderNumber: string;
+    totals: { grandTotal: number; currencyCode: string };
+  },
   payableNow: number,
 ) {
   const email = input.guestEmail;

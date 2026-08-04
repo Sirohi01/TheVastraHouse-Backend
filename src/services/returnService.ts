@@ -147,7 +147,11 @@ export async function approveReturn(input: {
 
   const gatewayRefund =
     input.refundMethod === "original_payment"
-      ? await refundOriginalRazorpayPayment(paymentSession, requestedAmount, returnRequest.returnNumber)
+      ? await refundOriginalRazorpayPayment(
+          paymentSession,
+          requestedAmount,
+          returnRequest.returnNumber,
+        )
       : undefined;
   const refundProcessed = !gatewayRefund || gatewayRefund.status === "processed";
   const refund = await Refund.create({

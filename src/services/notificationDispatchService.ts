@@ -28,11 +28,17 @@ export async function enqueueNotification(input: {
 }) {
   const recipient = input.to?.trim().toLowerCase();
   if (input.channel === "whatsapp" && !env.WHATSAPP_ENABLED) {
-    logger.info({ eventType: input.eventType }, "WhatsApp globally disabled; notification not queued");
+    logger.info(
+      { eventType: input.eventType },
+      "WhatsApp globally disabled; notification not queued",
+    );
     return null;
   }
   if (input.channel === "whatsapp" && input.consentGranted !== true) {
-    logger.warn({ eventType: input.eventType, to: recipient }, "WhatsApp notification skipped without explicit consent");
+    logger.warn(
+      { eventType: input.eventType, to: recipient },
+      "WhatsApp notification skipped without explicit consent",
+    );
     return null;
   }
   if (!recipient || isPlaceholderRecipient(recipient)) {

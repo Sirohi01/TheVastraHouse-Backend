@@ -9,7 +9,10 @@ export type WhatsappTemplate = {
 
 export async function sendWhatsappMessage(to: string, template: WhatsappTemplate) {
   if (!env.WHATSAPP_ENABLED) {
-    logger.info({ subject: template.subject, to }, "WhatsApp is globally disabled; message skipped");
+    logger.info(
+      { subject: template.subject, to },
+      "WhatsApp is globally disabled; message skipped",
+    );
     return { skipped: true };
   }
   const settings = await whatsappSettings();

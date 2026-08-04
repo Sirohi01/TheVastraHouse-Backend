@@ -94,10 +94,25 @@ export async function notifyProductionStageChanged(
   const fallback = buildStatusUpdateTemplate(variables);
   return Promise.all([
     order.guestEmail
-      ? enqueueNotification({ channel: "email", eventType: "production_stage_update", fallback, relatedEntity: { id: String(tracker._id), type: `production-tracker:${stage}` }, to: order.guestEmail, variables })
+      ? enqueueNotification({
+          channel: "email",
+          eventType: "production_stage_update",
+          fallback,
+          relatedEntity: { id: String(tracker._id), type: `production-tracker:${stage}` },
+          to: order.guestEmail,
+          variables,
+        })
       : null,
     order.whatsappOptIn && order.shippingAddress?.phone
-      ? enqueueNotification({ channel: "whatsapp", consentGranted: true, eventType: "production_stage_update", fallback, relatedEntity: { id: String(tracker._id), type: `production-tracker:${stage}` }, to: order.shippingAddress.phone, variables })
+      ? enqueueNotification({
+          channel: "whatsapp",
+          consentGranted: true,
+          eventType: "production_stage_update",
+          fallback,
+          relatedEntity: { id: String(tracker._id), type: `production-tracker:${stage}` },
+          to: order.shippingAddress.phone,
+          variables,
+        })
       : null,
   ]);
 }

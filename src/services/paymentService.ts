@@ -368,10 +368,11 @@ export async function handleRazorpayWebhook(rawBody: Buffer, signature: string |
 async function transitionRefundedOrder(order: Awaited<ReturnType<typeof Order.findById>>) {
   if (!order) return;
   const { transitionOrderDocument } = await import("./orderLifecycleService.js");
-  await transitionOrderDocument(
-    order as unknown as Parameters<typeof transitionOrderDocument>[0],
-    { actor: { actorType: "system" }, note: "Razorpay refund processed", toStatus: "refunded" },
-  );
+  await transitionOrderDocument(order as unknown as Parameters<typeof transitionOrderDocument>[0], {
+    actor: { actorType: "system" },
+    note: "Razorpay refund processed",
+    toStatus: "refunded",
+  });
 }
 
 export async function createCodPayment(input: CreatePaymentInput) {

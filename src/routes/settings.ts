@@ -8,13 +8,17 @@ export const settingsRouter = Router();
 
 settingsRouter.use(requireAuth);
 
-settingsRouter.get("/admin", requirePermission({ module: "settings", action: "read" }), async (_req, res, next) => {
-  try {
-    res.json({ settings: await listRuntimeSettings() });
-  } catch (error) {
-    next(error);
-  }
-});
+settingsRouter.get(
+  "/admin",
+  requirePermission({ module: "settings", action: "read" }),
+  async (_req, res, next) => {
+    try {
+      res.json({ settings: await listRuntimeSettings() });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 settingsRouter.put(
   "/admin",

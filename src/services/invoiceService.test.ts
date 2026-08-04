@@ -27,7 +27,9 @@ test("invoice renderer produces PDF bytes in test runtime", async () => {
     currencyCode: "INR",
     documentNumber: "INV/26-27/000001",
     issuedAt: new Date(),
-    lines: [{ gstRate: 5, lineTotal: 999, productName: "Kurti", quantity: 1, sku: "K-1", unitPrice: 999 }],
+    lines: [
+      { gstRate: 5, lineTotal: 999, productName: "Kurti", quantity: 1, sku: "K-1", unitPrice: 999 },
+    ],
     orderNumber: "TVH-1",
     totals: { grandTotal: 999 },
     type: "tax_invoice",
