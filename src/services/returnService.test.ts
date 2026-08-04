@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Types } from "mongoose";
+import { AuditLog } from "../models/AuditLog.js";
 import { InventoryLog } from "../models/InventoryLog.js";
 import { LowStockAlert } from "../models/LowStockAlert.js";
 import { Order } from "../models/Order.js";
@@ -125,7 +126,9 @@ function patchReturnModels() {
   const originalLowStockCreate = LowStockAlert.create;
   const originalLowStockUpdateMany = LowStockAlert.updateMany;
   const originalTimelineCreate = OrderTimeline.create;
+  const originalAuditCreate = AuditLog.create;
   const ctx: {
+    auditLogs: Array<Record<string, unknown>>;
     existingRefund?: unknown;
     inventoryLogs: Array<Record<string, unknown>>;
     ledger: { available: number; returned: number; sku: string; warehouseId: string };
@@ -136,6 +139,7 @@ function patchReturnModels() {
     returns: unknown[];
     storeCredits: Array<Record<string, unknown>>;
   } = {
+    auditLogs: [],
     inventoryLogs: [],
     ledger: { available: 0, returned: 0, sku: "TVH-RET-M-0001", warehouseId: "" },
     paymentHistory: [],
@@ -197,6 +201,10 @@ function patchReturnModels() {
     Promise.resolve({ modifiedCount: 0 });
   (OrderTimeline as unknown as { create: unknown }).create = (payload: unknown) =>
     Promise.resolve(payload);
+  (AuditLog as unknown as { create: unknown }).create = (payload: Record<string, unknown>) => {
+    ctx.auditLogs.push(payload);
+    return Promise.resolve(payload);
+  };
 
   return Object.assign(ctx, {
     restore() {
@@ -217,6 +225,7 @@ function patchReturnModels() {
       (LowStockAlert as unknown as { create: unknown }).create = originalLowStockCreate;
       (LowStockAlert as unknown as { updateMany: unknown }).updateMany = originalLowStockUpdateMany;
       (OrderTimeline as unknown as { create: unknown }).create = originalTimelineCreate;
+      (AuditLog as unknown as { create: unknown }).create = originalAuditCreate;
     },
   });
 }
@@ -242,6 +251,9 @@ function buildOrder(input: { deliveredAt?: Date; status?: "delivered" | "returne
     stockReservations: [{ quantity: 1, sku: "TVH-RET-M-0001", status: "deducted", warehouseId }],
     totals: { currencyCode: "INR", grandTotal: 1999 },
     userId: new Types.ObjectId(),
+    toObject() {
+      return { ...order };
+    },
   };
   return order;
 }
@@ -270,6 +282,9 @@ function buildReturnRequest(
     save: async () => returnRequest,
     status: "requested",
     userId: order.userId,
+    toObject() {
+      return { ...returnRequest };
+    },
     ...overrides,
   };
   return returnRequest;

@@ -4,6 +4,8 @@ import type { Server } from "node:http";
 import { Types } from "mongoose";
 import { createApp } from "../app.js";
 import { API_VERSION } from "../config/api.js";
+import { Category } from "../models/Category.js";
+import { Collection } from "../models/Collection.js";
 import { Product } from "../models/Product.js";
 import { ProductReview } from "../models/ProductReview.js";
 
@@ -250,6 +252,58 @@ test("review submission enters the moderation queue and approved reviews are lis
   assert.equal(listResponse.status, 200);
   assert.equal(listPayload.data.length, 1);
   assert.equal(listPayload.meta.total, 1);
+});
+
+test("sitemap endpoint returns active product/category/collection slugs", async (t) => {
+  const originalProductFind = Product.find;
+  const originalCategoryFind = Category.find;
+  const originalCollectionFind = Collection.find;
+
+  (Product as unknown as { find: unknown }).find = () =>
+    chain([{ slug: "red-silk-kurti", updatedAt: new Date("2026-01-01") }]);
+  (Category as unknown as { find: unknown }).find = () =>
+    chain([{ slug: "festive-wear", updatedAt: new Date("2026-01-02") }]);
+  (Collection as unknown as { find: unknown }).find = () =>
+    chain([{ slug: "winter-edit", updatedAt: new Date("2026-01-03") }]);
+  t.after(() => {
+    (Product as unknown as { find: unknown }).find = originalProductFind;
+    (Category as unknown as { find: unknown }).find = originalCategoryFind;
+    (Collection as unknown as { find: unknown }).find = originalCollectionFind;
+  });
+
+  const { close, url } = await listen();
+  t.after(close);
+  const response = await fetch(`${url}/api/${API_VERSION}/catalog/sitemap`);
+  const payload = (await response.json()) as {
+    products: Array<{ slug: string }>;
+    categories: Array<{ slug: string }>;
+    collections: Array<{ slug: string }>;
+  };
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    payload.products.map((item) => item.slug),
+    ["red-silk-kurti"],
+  );
+  assert.deepEqual(
+    payload.categories.map((item) => item.slug),
+    ["festive-wear"],
+  );
+  assert.deepEqual(
+    payload.collections.map((item) => item.slug),
+    ["winter-edit"],
+  );
+});
+
+test("seo-settings endpoint returns public defaults without requiring auth", async (t) => {
+  const { close, url } = await listen();
+  t.after(close);
+  const response = await fetch(`${url}/api/${API_VERSION}/catalog/seo-settings`);
+  const payload = (await response.json()) as { seo: { siteName: string } };
+
+  assert.equal(response.status, 200);
+  assert.equal(typeof payload.seo.siteName, "string");
+  assert.ok(payload.seo.siteName.length > 0);
 });
 
 async function listen(): Promise<{ url: string; close: () => Promise<void> }> {

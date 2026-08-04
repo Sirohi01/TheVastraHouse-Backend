@@ -1,7 +1,8 @@
-import type { HydratedDocument, Types } from "mongoose";
+import { Types, type HydratedDocument } from "mongoose";
 import { AppError } from "../middleware/errorHandler.js";
 import { Order, type orderStatuses } from "../models/Order.js";
 import { OrderTimeline } from "../models/OrderTimeline.js";
+import { writeAuditLog } from "./auditLogService.js";
 import { releaseOrderStock } from "./inventoryService.js";
 
 export type OrderStatus = (typeof orderStatuses)[number];
@@ -106,6 +107,7 @@ export async function transitionOrderDocument(
 ) {
   assertTransitionAllowed(order, input);
   const fromStatus = order.status;
+  const before = order.toObject();
 
   if (input.toStatus === "cancelled") {
     await releaseStockForCancellation(order, input.actor);
@@ -127,7 +129,26 @@ export async function transitionOrderDocument(
     note: input.note,
     order,
   });
+  await writeAuditLog({
+    action: "update",
+    actor: {
+      actorId: input.actor.actorId ? toObjectId(input.actor.actorId) : undefined,
+      actorType: input.actor.actorType,
+    },
+    after: order.toObject(),
+    before,
+    entity: { id: order._id, type: "order", displayId: order.orderNumber },
+    metadata: { fromStatus, toStatus: input.toStatus },
+  });
   return order;
+}
+
+function toObjectId(value: string) {
+  try {
+    return new Types.ObjectId(value);
+  } catch {
+    return undefined;
+  }
 }
 
 export async function cancelCustomerOrder(input: {

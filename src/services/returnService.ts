@@ -6,6 +6,7 @@ import { PaymentSession } from "../models/PaymentSession.js";
 import { Refund, type refundMethods } from "../models/Refund.js";
 import { ReturnRequest, type returnStockDispositions } from "../models/ReturnRequest.js";
 import { StoreCreditIssue } from "../models/StoreCreditIssue.js";
+import { writeAuditLog } from "./auditLogService.js";
 import { markDamagedStock, markReturnedStock, restockReturnedStock } from "./inventoryService.js";
 import { transitionOrderDocument } from "./orderLifecycleService.js";
 
@@ -101,6 +102,7 @@ export async function approveReturn(input: {
     throw new AppError("Return request is already processed", 409);
   }
 
+  const returnRequestBefore = returnRequest.toObject();
   const existingRefund = await Refund.findOne({ returnRequestId: returnRequest._id });
   if (existingRefund) {
     throw new AppError("Refund already exists for this return", 409);
@@ -199,6 +201,26 @@ export async function approveReturn(input: {
     });
   }
 
+  await writeAuditLog({
+    action: "update",
+    actor: {
+      actorId: input.actor.actorId ? new Types.ObjectId(input.actor.actorId) : undefined,
+      actorType: input.actor.actorType,
+    },
+    after: returnRequest.toObject(),
+    before: returnRequestBefore,
+    entity: {
+      id: returnRequest._id,
+      type: "return-request",
+      displayId: returnRequest.returnNumber,
+    },
+    metadata: {
+      refundAmount: refund.amount,
+      refundMethod: input.refundMethod,
+      stockDisposition: input.stockDisposition,
+    },
+  });
+
   return { refund, returnRequest };
 }
 
@@ -217,6 +239,7 @@ export async function rejectReturn(input: {
     throw new AppError("Return request is already processed", 409);
   }
 
+  const before = returnRequest.toObject();
   returnRequest.status = "rejected";
   returnRequest.decisionNote = input.note;
   returnRequest.decidedAt = new Date();
@@ -224,6 +247,21 @@ export async function rejectReturn(input: {
     ? new Types.ObjectId(input.actor.actorId)
     : undefined;
   await returnRequest.save();
+  await writeAuditLog({
+    action: "update",
+    actor: {
+      actorId: input.actor.actorId ? new Types.ObjectId(input.actor.actorId) : undefined,
+      actorType: input.actor.actorType,
+    },
+    after: returnRequest.toObject(),
+    before,
+    entity: {
+      id: returnRequest._id,
+      type: "return-request",
+      displayId: returnRequest.returnNumber,
+    },
+    metadata: { note: input.note },
+  });
   return returnRequest;
 }
 

@@ -20,6 +20,7 @@ const allModules = [
   "media",
   "invoicing",
   "analytics",
+  "notifications",
   "settings",
   "users",
   "audit",
@@ -60,6 +61,7 @@ export const seedRoles: SeedRole[] = [
       { module: "invoicing", action: "read" },
       { module: "inventory", action: "read" },
       { module: "catalog", action: "read" },
+      { module: "notifications", action: "read" },
     ],
   },
   {
@@ -80,6 +82,7 @@ export const seedRoles: SeedRole[] = [
     permissions: [
       { module: "marketing", action: "manage" },
       { module: "seo", action: "manage" },
+      { module: "notifications", action: "manage" },
       { module: "crm", action: "read" },
       { module: "orders", action: "read" },
       { module: "customers", action: "read" },

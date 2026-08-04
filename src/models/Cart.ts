@@ -90,6 +90,16 @@ const cartTotalsSchema = new Schema(
   { _id: false },
 );
 
+export const attributionSchema = new Schema(
+  {
+    utmSource: { type: String, trim: true },
+    utmMedium: { type: String, trim: true },
+    utmCampaign: { type: String, trim: true },
+    referrer: { type: String, trim: true },
+  },
+  { _id: false },
+);
+
 const cartSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User" },
@@ -98,6 +108,7 @@ const cartSchema = new Schema(
     giftPackaging: { type: giftPackagingSchema, default: () => ({}) },
     giftCardRedemptions: [giftCardRedemptionSchema],
     totals: { type: cartTotalsSchema, default: () => ({}) },
+    attribution: attributionSchema,
     lastActivityAt: { type: Date, default: Date.now, index: true },
     abandonedCartEventEmittedAt: { type: Date },
   },

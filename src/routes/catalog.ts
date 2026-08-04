@@ -15,6 +15,7 @@ import { Tag } from "../models/Tag.js";
 import { createSlug } from "../services/slugService.js";
 import { generateBarcode, generateSku } from "../services/skuService.js";
 import { computeBadges, recomputeProductBadges } from "../services/merchandisingBadgeService.js";
+import { getPublicSeoSettings } from "../services/runtimeSettingsService.js";
 import { validateGstRate } from "../services/taxValidationService.js";
 import { buildPaginatedResult, parsePagination } from "../utils/pagination.js";
 import { buildQuery } from "../utils/queryBuilder.js";
@@ -191,6 +192,8 @@ catalogRouter.get("/products", listPublicProducts);
 catalogRouter.get("/home", getCatalogHome);
 catalogRouter.get("/filters", getCatalogFilters);
 catalogRouter.get("/search", searchCatalog);
+catalogRouter.get("/sitemap", getSitemapData);
+catalogRouter.get("/seo-settings", getSeoSettings);
 catalogRouter.get("/products/:slug/pdp", getProductPdp);
 catalogRouter.get("/products/:slug/reviews", listProductReviews);
 catalogRouter.post(
@@ -365,6 +368,33 @@ async function getCatalogFilters(_req: Request, res: Response, next: NextFunctio
         slug: item.slug,
       })),
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getSitemapData(_req: Request, res: Response, next: NextFunction) {
+  try {
+    const activeFilter = { active: true, status: { $ne: "deleted" } };
+    const [products, categories, collections] = await Promise.all([
+      Product.find(activeFilter).select("slug updatedAt").lean(),
+      Category.find(activeFilter).select("slug updatedAt").lean(),
+      Collection.find(activeFilter).select("slug updatedAt").lean(),
+    ]);
+
+    res.json({
+      products: products.map((item) => ({ slug: item.slug, updatedAt: item.updatedAt })),
+      categories: categories.map((item) => ({ slug: item.slug, updatedAt: item.updatedAt })),
+      collections: collections.map((item) => ({ slug: item.slug, updatedAt: item.updatedAt })),
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getSeoSettings(_req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json({ seo: await getPublicSeoSettings() });
   } catch (error) {
     next(error);
   }

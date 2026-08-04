@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { refundMethods } from "../models/Refund.js";
 import { ReturnRequest, returnStockDispositions } from "../models/ReturnRequest.js";
@@ -22,6 +23,12 @@ const actorFromRequest = (req: { user?: { id: string; type: "customer" | "admin"
 
 returnsRouter.use(requireAuth);
 
+const returnRequestLimit = rateLimit({
+  keyPrefix: "return-request-create",
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+});
+
 returnsRouter.get("/me", async (req, res, next) => {
   try {
     const returns = await ReturnRequest.find({ userId: req.user!.id })
@@ -35,6 +42,7 @@ returnsRouter.get("/me", async (req, res, next) => {
 
 returnsRouter.post(
   "/requests",
+  returnRequestLimit,
   validateRequest({
     body: z
       .object({

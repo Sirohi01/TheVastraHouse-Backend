@@ -4,27 +4,35 @@ import { AppError } from "../middleware/errorHandler.js";
 import { Cart } from "../models/Cart.js";
 import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
-import {
-  createCodPayment,
-  createManualPayment,
-  createRazorpayPayment,
-  createUpiPayment,
-} from "./paymentService.js";
+import { createManualPayment, createRazorpayPayment, createUpiPayment } from "./paymentService.js";
 import {
   deductOrderReservedStock,
   getAvailableStockBySku,
+  releaseOrderStock,
   reserveOrderStock,
 } from "./inventoryService.js";
 import { sendOrderConfirmationEmail } from "./orderFulfillmentService.js";
 import {
   assertPreOrderWindow,
-  createProductionTrackersForOrder,
   isPreOrderActive,
   releasePreOrderSlots,
   reservePreOrderSlots,
   type PreOrderVariantSnapshot,
 } from "./preOrderService.js";
+import { qualifyReferral } from "./referralService.js";
 import { getRuntimeNumberSetting } from "./runtimeSettingsService.js";
+import {
+  earnPointsForOrder,
+  getRewardPointsBalance,
+  pointsToValue,
+  redeemPointsByValue,
+  valueToPoints,
+} from "./rewardPointsService.js";
+import {
+  getStoreCreditBalance,
+  issueStoreCredit,
+  redeemStoreCredit,
+} from "./storeCreditService.js";
 
 export type CheckoutAddress = {
   fullName?: string;
@@ -95,6 +103,7 @@ export async function previewCheckout(input: Omit<CheckoutInput, "paymentMethod"
     rewardValueRequested: input.rewardValueRequested,
     shippingMethod: input.shippingMethod,
     storeCreditRequested: input.storeCreditRequested,
+    userId: input.userId,
   });
 }
 
@@ -109,14 +118,16 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     rewardValueRequested: input.rewardValueRequested,
     shippingMethod: input.shippingMethod,
     storeCreditRequested: input.storeCreditRequested,
+    userId: input.userId,
   });
   const orderNumber = buildOrderNumber();
-  const paymentMode =
-    input.paymentMode ??
-    (input.payableNow && input.payableNow < calculation.totals.grandTotal ? "advance" : "full");
-  const payableNow = normalizePayableNow(calculation.totals.grandTotal, input.payableNow);
+  const paymentMode = input.paymentMethod === "cod" ? "advance" : "full";
+  const payableNow =
+    input.paymentMethod === "cod"
+      ? Math.round(calculation.totals.grandTotal * 0.5)
+      : calculation.totals.grandTotal;
   const hasPreOrderItems = calculation.items.some((item) => item.preOrder?.enabled);
-  assertPreOrderPaymentMode(hasPreOrderItems, paymentMode, calculation.preOrderPaymentMode);
+  assertCheckoutPaymentMode(input.paymentMode);
   const payment = await createPaymentForOrder(
     input,
     orderNumber,
@@ -148,8 +159,47 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     await releasePreOrderSlots(preOrderReservations);
     throw error;
   }
+
+  let redeemedStoreCreditAmount = 0;
+
+  try {
+    if (input.userId && calculation.totals.storeCreditApplied > 0) {
+      await redeemStoreCredit({
+        amount: calculation.totals.storeCreditApplied,
+        orderNumber,
+        userId: input.userId,
+      });
+      redeemedStoreCreditAmount = calculation.totals.storeCreditApplied;
+    }
+
+    if (input.userId && calculation.rewardPointsRedeemed > 0) {
+      await redeemPointsByValue({
+        orderNumber,
+        requestedValue: calculation.totals.rewardValueApplied,
+        userId: input.userId,
+      });
+    }
+  } catch (error) {
+    if (redeemedStoreCreditAmount > 0 && input.userId) {
+      await issueStoreCredit({
+        amount: redeemedStoreCreditAmount,
+        notes: "Checkout rollback: reward point redemption failed",
+        sourceType: "admin",
+        userId: input.userId,
+      });
+    }
+    await releaseOrderStock({
+      actor: { actorId: checkoutActorId(input), actorType: "customer" },
+      referenceId: orderNumber,
+      reservations: stockReservations,
+    });
+    await releasePreOrderSlots(preOrderReservations);
+    throw error;
+  }
+
   const order = await Order.create({
     adjustments: calculation.adjustments,
+    attribution: cart.attribution,
     billingAddress: input.billingAddress ?? input.shippingAddress,
     cartId: cart._id,
     items: calculation.items,
@@ -169,10 +219,7 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     guestSessionId: input.guestSessionId,
   });
 
-  if (
-    stockReservations.length &&
-    (status === "confirmed" || status === "cod_confirmed" || status === "pre_order_confirmed")
-  ) {
+  if (stockReservations.length && (status === "confirmed" || status === "pre_order_confirmed")) {
     await deductOrderReservedStock({
       actor: { actorId: checkoutActorId(input), actorType: "customer" },
       referenceId: orderNumber,
@@ -186,8 +233,9 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     await order.save();
   }
 
-  if (hasPreOrderItems && input.paymentMethod !== "razorpay") {
-    await createProductionTrackersForOrder(order);
+  if (status === "confirmed" || status === "pre_order_confirmed") {
+    await earnPointsForOrder(order);
+    await qualifyReferral(order);
   }
 
   cart.items = [];
@@ -215,6 +263,7 @@ async function calculateOrderTotals(
     couponCode?: string;
     storeCreditRequested?: number;
     rewardValueRequested?: number;
+    userId?: string;
   },
 ) {
   const lines = cartLines(cart);
@@ -288,22 +337,40 @@ async function calculateOrderTotals(
       ),
     ),
   );
-  const storeCreditApplied = Math.min(input.storeCreditRequested ?? 0, 0);
-  const rewardValueApplied = Math.min(input.rewardValueRequested ?? 0, 0);
   const discountTotal = roundMoney(couponDiscount);
+  const preLoyaltyRemaining = Math.max(
+    0,
+    itemSubtotal + giftPackagingFee + shippingFee - discountTotal - giftCardDiscount,
+  );
+  let storeCreditApplied = 0;
+  let rewardValueApplied = 0;
+  let rewardPointsRedeemed = 0;
+
+  if (input.userId) {
+    const requestedStoreCredit = Math.max(0, input.storeCreditRequested ?? 0);
+
+    if (requestedStoreCredit > 0) {
+      const storeCreditBalance = await getStoreCreditBalance(input.userId);
+      storeCreditApplied = roundMoney(
+        Math.min(requestedStoreCredit, storeCreditBalance, preLoyaltyRemaining),
+      );
+    }
+
+    const requestedRewardValue = Math.max(0, input.rewardValueRequested ?? 0);
+
+    if (requestedRewardValue > 0) {
+      const remainingAfterStoreCredit = Math.max(0, preLoyaltyRemaining - storeCreditApplied);
+      const cappedRequest = Math.min(requestedRewardValue, remainingAfterStoreCredit);
+      const pointsBalance = await getRewardPointsBalance(input.userId);
+      rewardPointsRedeemed = Math.min(await valueToPoints(cappedRequest), pointsBalance);
+      rewardValueApplied = roundMoney(await pointsToValue(rewardPointsRedeemed));
+    }
+  }
+
   const taxableTotal = roundMoney(items.reduce((total, item) => total + item.taxableAmount, 0));
   const gstTotal = roundMoney(items.reduce((total, item) => total + item.gstAmount, 0));
   const grandTotal = roundMoney(
-    Math.max(
-      0,
-      itemSubtotal +
-        giftPackagingFee +
-        shippingFee -
-        discountTotal -
-        giftCardDiscount -
-        storeCreditApplied -
-        rewardValueApplied,
-    ),
+    Math.max(0, preLoyaltyRemaining - storeCreditApplied - rewardValueApplied),
   );
 
   return {
@@ -321,11 +388,12 @@ async function calculateOrderTotals(
       { amount: shippingFee, label: `${input.shippingMethod} shipping`, type: "shipping" as const },
       { amount: giftPackagingFee, label: "Gift packaging", type: "gift_packaging" as const },
       { amount: giftCardDiscount, label: "Gift card", type: "gift_card" as const },
-      { amount: storeCreditApplied, label: "Store credit stub", type: "store_credit" as const },
-      { amount: rewardValueApplied, label: "Reward redemption stub", type: "reward" as const },
+      { amount: storeCreditApplied, label: "Store credit", type: "store_credit" as const },
+      { amount: rewardValueApplied, label: "Reward points", type: "reward" as const },
     ],
     items,
     preOrderPaymentMode: resolvePreOrderPaymentMode(items),
+    rewardPointsRedeemed,
     taxBreakdown: [...taxBreakdown.entries()].map(([gstRate, value]) => ({ gstRate, ...value })),
     totals: {
       currencyCode: lines[0]?.currencyCode ?? "INR",
@@ -366,7 +434,7 @@ async function createPaymentForOrder(
   }
 
   if (input.paymentMethod === "cod") {
-    return createCodPayment(base);
+    return createRazorpayPayment(base);
   }
 
   if (input.paymentMethod === "manual_bank_transfer") {
@@ -385,12 +453,8 @@ function mapInitialOrderStatus(
   paymentStatus: string,
   hasPreOrderItems = false,
 ) {
-  if (hasPreOrderItems && (paymentStatus === "confirmed" || paymentMethod === "cod")) {
+  if (hasPreOrderItems && paymentStatus === "confirmed") {
     return "pre_order_confirmed";
-  }
-
-  if (paymentMethod === "cod") {
-    return "cod_confirmed";
   }
 
   if (paymentMethod === "manual_bank_transfer") {
@@ -478,24 +542,12 @@ function resolvePreOrderPaymentMode(
   return [...modes][0];
 }
 
-function assertPreOrderPaymentMode(
-  hasPreOrderItems: boolean,
-  paymentMode: "full" | "advance" | "balance",
-  requiredMode?: "full" | "advance",
-) {
+function assertCheckoutPaymentMode(paymentMode?: "full" | "advance" | "balance") {
   if (paymentMode === "balance") {
     throw new AppError(
       "Balance payment mode is only available for paying an existing order's outstanding balance",
       400,
     );
-  }
-
-  if (!hasPreOrderItems) {
-    return;
-  }
-
-  if (requiredMode && paymentMode !== requiredMode) {
-    throw new AppError(`Pre-order requires ${requiredMode} payment mode`, 400);
   }
 }
 
@@ -526,16 +578,6 @@ async function calculateShippingFee(itemSubtotal: number, method: "standard" | "
 
 function calculateCouponStubDiscount(_couponCode?: string) {
   return 0;
-}
-
-function normalizePayableNow(total: number, payableNow?: number) {
-  const value = Math.round(payableNow ?? total);
-
-  if (value <= 0 || value > total) {
-    throw new AppError("Payable amount is invalid", 400);
-  }
-
-  return value;
 }
 
 function buildOrderNumber() {

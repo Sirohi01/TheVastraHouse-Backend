@@ -8,7 +8,9 @@ import { adminRouter } from "./routes/admin.js";
 import { cmsRouter } from "./routes/cms.js";
 import { commerceRouter } from "./routes/commerce.js";
 import { healthRouter } from "./routes/health.js";
+import { loyaltyRouter } from "./routes/loyalty.js";
 import { mediaRouter } from "./routes/media.js";
+import { notificationsRouter } from "./routes/notifications.js";
 import { paymentsRouter, paymentWebhookRouter } from "./routes/payments.js";
 import { catalogRouter } from "./routes/catalog.js";
 import { checkoutRouter } from "./routes/checkout.js";
@@ -42,6 +44,8 @@ export function createApp() {
   app.use(`/api/${API_VERSION}/pre-orders`, preOrdersRouter);
   app.use(`/api/${API_VERSION}/returns`, returnsRouter);
   app.use(`/api/${API_VERSION}/settings`, settingsRouter);
+  app.use(`/api/${API_VERSION}/notifications`, notificationsRouter);
+  app.use(`/api/${API_VERSION}/loyalty`, loyaltyRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

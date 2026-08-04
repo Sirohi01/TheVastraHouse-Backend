@@ -3,6 +3,7 @@ import { connectMongo } from "./db/mongoose.js";
 import { createApp } from "./app.js";
 import { startMerchandisingBadgeJob } from "./services/merchandisingBadgeService.js";
 import { startAbandonedCartJob, startWishlistSignalJob } from "./services/cartService.js";
+import { startNotificationDispatchJob } from "./services/notificationDispatchService.js";
 import { seedDefaultRoles } from "./services/roleSeedService.js";
 import { logger } from "./utils/logger.js";
 
@@ -29,12 +30,14 @@ async function bootstrap() {
   const merchandisingBadgeJob = startMerchandisingBadgeJob();
   const abandonedCartJob = startAbandonedCartJob();
   const wishlistSignalJob = startWishlistSignalJob();
+  const notificationDispatchJob = startNotificationDispatchJob();
 
   const shutdown = (signal: NodeJS.Signals) => {
     logger.info({ signal }, "Shutting down backend server");
     clearInterval(merchandisingBadgeJob);
     clearInterval(abandonedCartJob);
     clearInterval(wishlistSignalJob);
+    clearInterval(notificationDispatchJob);
     server.close(() => {
       process.exit(0);
     });

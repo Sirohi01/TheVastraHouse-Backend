@@ -1,14 +1,15 @@
 import { env } from "../config/env.js";
 import { Order } from "../models/Order.js";
-import { logger } from "../utils/logger.js";
-import { sendEmail } from "./emailService.js";
 import {
   buildBalancePaymentReceivedTemplate,
   buildOrderConfirmationTemplate,
 } from "./emailTemplateService.js";
 import { deductOrderReservedStock } from "./inventoryService.js";
+import { enqueueNotification } from "./notificationDispatchService.js";
 import { recordOrderTimeline, type OrderActor, type OrderStatus } from "./orderLifecycleService.js";
 import { createProductionTrackersForOrder } from "./preOrderService.js";
+import { qualifyReferral } from "./referralService.js";
+import { earnPointsForOrder } from "./rewardPointsService.js";
 import { getRuntimeSetting } from "./runtimeSettingsService.js";
 
 type FulfillableOrder = {
@@ -16,6 +17,8 @@ type FulfillableOrder = {
   orderNumber: string;
   status: OrderStatus;
   paymentMode: "full" | "advance" | "balance";
+  paymentMethod: "razorpay" | "cod" | "manual_bank_transfer" | "upi";
+  userId?: unknown;
   guestEmail?: string;
   shippingAddress?: { fullName?: string };
   items: Array<{
@@ -82,7 +85,11 @@ async function confirmOrderForFirstTime(
 ) {
   const fromStatus = order.status;
   const hasPreOrderItems = order.items.some((item) => item.preOrder?.enabled);
-  order.status = hasPreOrderItems ? "pre_order_confirmed" : "confirmed";
+  order.status = hasPreOrderItems
+    ? "pre_order_confirmed"
+    : order.paymentMethod === "cod"
+      ? "cod_confirmed"
+      : "confirmed";
   await deductPendingReservations(order, input.actor);
   await order.save();
 
@@ -96,6 +103,9 @@ async function confirmOrderForFirstTime(
   if (hasPreOrderItems) {
     await createProductionTrackersForOrder(order);
   }
+
+  await earnPointsForOrder(order);
+  await qualifyReferral(order);
 
   await sendOrderConfirmationEmail(
     { guestEmail: order.guestEmail, shippingAddress: order.shippingAddress },
@@ -155,31 +165,25 @@ export async function sendOrderConfirmationEmail(
     return;
   }
 
-  const total = formatCheckoutMoney(order.totals.grandTotal, order.totals.currencyCode);
-  const dueNow = formatCheckoutMoney(payableNow, order.totals.currencyCode);
-  const balanceRemaining = formatCheckoutMoney(
-    Math.max(0, order.totals.grandTotal - payableNow),
-    order.totals.currencyCode,
-  );
+  const variables = {
+    balanceRemaining: formatCheckoutMoney(
+      Math.max(0, order.totals.grandTotal - payableNow),
+      order.totals.currencyCode,
+    ),
+    customerName: input.shippingAddress?.fullName,
+    dueNow: formatCheckoutMoney(payableNow, order.totals.currencyCode),
+    orderNumber: order.orderNumber,
+    total: formatCheckoutMoney(order.totals.grandTotal, order.totals.currencyCode),
+    trackUrl: `${await frontendPublicUrl()}/track-order?order=${encodeURIComponent(order.orderNumber)}`,
+  };
 
-  try {
-    await sendEmail(
-      email,
-      buildOrderConfirmationTemplate({
-        balanceRemaining,
-        customerName: input.shippingAddress?.fullName,
-        dueNow,
-        orderNumber: order.orderNumber,
-        total,
-        trackUrl: `${await frontendPublicUrl()}/track-order?order=${encodeURIComponent(order.orderNumber)}`,
-      }),
-    );
-  } catch (error) {
-    logger.warn(
-      { error, orderNumber: order.orderNumber, to: email },
-      "Order confirmation email failed after checkout",
-    );
-  }
+  await enqueueNotification({
+    channel: "email",
+    eventType: "order_confirmation",
+    fallback: buildOrderConfirmationTemplate(variables),
+    to: email,
+    variables,
+  });
 }
 
 export async function sendBalancePaymentReceivedEmail(
@@ -197,22 +201,20 @@ export async function sendBalancePaymentReceivedEmail(
     return;
   }
 
-  try {
-    await sendEmail(
-      email,
-      buildBalancePaymentReceivedTemplate({
-        amountPaid: formatCheckoutMoney(amountPaidNow, order.totals.currencyCode),
-        customerName: order.shippingAddress?.fullName,
-        orderNumber: order.orderNumber,
-        trackUrl: `${await frontendPublicUrl()}/track-order?order=${encodeURIComponent(order.orderNumber)}`,
-      }),
-    );
-  } catch (error) {
-    logger.warn(
-      { error, orderNumber: order.orderNumber, to: email },
-      "Balance payment confirmation email failed",
-    );
-  }
+  const variables = {
+    amountPaid: formatCheckoutMoney(amountPaidNow, order.totals.currencyCode),
+    customerName: order.shippingAddress?.fullName,
+    orderNumber: order.orderNumber,
+    trackUrl: `${await frontendPublicUrl()}/track-order?order=${encodeURIComponent(order.orderNumber)}`,
+  };
+
+  await enqueueNotification({
+    channel: "email",
+    eventType: "balance_payment_received",
+    fallback: buildBalancePaymentReceivedTemplate(variables),
+    to: email,
+    variables,
+  });
 }
 
 export function formatCheckoutMoney(value: number, currencyCode: string) {

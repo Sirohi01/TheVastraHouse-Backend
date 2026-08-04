@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { attachOptionalUser } from "../middleware/authMiddleware.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { Order } from "../models/Order.js";
 import { PaymentSession } from "../models/PaymentSession.js";
@@ -53,6 +54,12 @@ const checkoutSchema = z
 
 checkoutRouter.use(attachOptionalUser);
 
+const orderCreationLimit = rateLimit({
+  keyPrefix: "checkout-order-create",
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+});
+
 checkoutRouter.get("/razorpay/config", async (_req, res, next) => {
   try {
     res.json({
@@ -89,6 +96,7 @@ checkoutRouter.post(
 
 checkoutRouter.post(
   "/orders",
+  orderCreationLimit,
   validateRequest({ body: checkoutSchema }),
   async (req, res, next) => {
     try {

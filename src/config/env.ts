@@ -75,6 +75,26 @@ const envSchema = z.object({
   SHIPPING_STANDARD_FEE: z.coerce.number().nonnegative().default(99),
   SHIPPING_EXPRESS_FEE: z.coerce.number().nonnegative().default(199),
   SHIPPING_FREE_THRESHOLD: z.coerce.number().nonnegative().default(2999),
+  SEO_SITE_NAME: z.string().default("The Vastra House"),
+  SEO_DEFAULT_TITLE: z.string().default("The Vastra House — Soft-Luxury Indian Wear"),
+  SEO_DEFAULT_DESCRIPTION: z
+    .string()
+    .default("Soft-luxury Indian wear, festive edits, and everyday occasion pieces."),
+  SEO_DEFAULT_OG_IMAGE: z.string().default(""),
+  SEO_TWITTER_HANDLE: z.string().default(""),
+  SEO_ORGANIZATION_LOGO_URL: z.string().default(""),
+  SEO_ROBOTS_EXTRA_DISALLOW: z.string().default(""),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().default(""),
+  WHATSAPP_ACCESS_TOKEN: z.string().default(""),
+  WHATSAPP_API_VERSION: z.string().default("v21.0"),
+  NOTIFICATION_DISPATCH_JOB_INTERVAL_SECONDS: z.coerce.number().int().positive().default(15),
+  NOTIFICATION_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  REWARD_POINTS_EARN_RATE: z.coerce.number().nonnegative().default(5),
+  REWARD_POINTS_REDEMPTION_VALUE: z.coerce.number().nonnegative().default(0.1),
+  LOYALTY_TIER_SILVER_THRESHOLD: z.coerce.number().nonnegative().default(10_000),
+  LOYALTY_TIER_GOLD_THRESHOLD: z.coerce.number().nonnegative().default(50_000),
+  LOYALTY_TIER_PLATINUM_THRESHOLD: z.coerce.number().nonnegative().default(150_000),
+  REFERRAL_REWARD_AMOUNT: z.coerce.number().nonnegative().default(200),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

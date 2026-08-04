@@ -11,7 +11,10 @@ import { PaymentHistory } from "../models/PaymentHistory.js";
 import { PaymentSession } from "../models/PaymentSession.js";
 import { Product } from "../models/Product.js";
 import { ProductionTracker } from "../models/ProductionTracker.js";
+import { Referral } from "../models/Referral.js";
+import { RewardPointsLedger } from "../models/RewardPointsLedger.js";
 import { StockLedger } from "../models/StockLedger.js";
+import { User } from "../models/User.js";
 import { signAccessToken } from "./jwtService.js";
 import { createOrderFromCheckout, previewCheckout, type CheckoutInput } from "./checkoutService.js";
 
@@ -38,7 +41,7 @@ test("order creation maps all Phase 10 payment methods to correct initial order 
   t.after(ctx.restore);
   const cases: Array<[CheckoutInput["paymentMethod"], string]> = [
     ["razorpay", "pending_payment"],
-    ["cod", "cod_confirmed"],
+    ["cod", "pending_payment"],
     ["manual_bank_transfer", "payment_verification_pending"],
     ["upi", "pending_payment"],
   ];
@@ -60,10 +63,7 @@ test("order creation maps all Phase 10 payment methods to correct initial order 
     });
 
     assert.equal(result.order.status, expectedStatus);
-    assert.equal(
-      result.order.stockReservations[0].status,
-      expectedStatus === "cod_confirmed" ? "deducted" : "reserved",
-    );
+    assert.equal(result.order.stockReservations[0].status, "reserved");
     assert.equal(result.order.totals.shippingFee, 199);
     assert.equal(result.paymentSession.orderReference, result.order.orderNumber);
   }
@@ -72,7 +72,7 @@ test("order creation maps all Phase 10 payment methods to correct initial order 
   assert.equal(ctx.paymentSessions.length, 4);
 });
 
-test("checkout order creation reserves and deducts real inventory ledger stock", async (t) => {
+test("COD checkout reserves stock until the Razorpay advance is captured", async (t) => {
   const ctx = patchCheckoutModels({ inventoryAvailable: 2 });
   t.after(ctx.restore);
 
@@ -83,18 +83,20 @@ test("checkout order creation reserves and deducts real inventory ledger stock",
     userId: ctx.userId,
   });
 
-  assert.equal(result.order.status, "cod_confirmed");
-  assert.equal(result.order.stockReservations[0].status, "deducted");
+  assert.equal(result.order.status, "pending_payment");
+  assert.equal(result.order.paymentMode, "advance");
+  assert.equal(result.paymentSession.payableNow, Math.round(result.order.totals.grandTotal * 0.5));
+  assert.equal(result.order.stockReservations[0].status, "reserved");
   assert.equal(String(result.order.stockReservations[0].warehouseId), ctx.warehouseId);
   assert.equal(ctx.inventoryLedger?.available, 0);
-  assert.equal(ctx.inventoryLedger?.reserved, 0);
+  assert.equal(ctx.inventoryLedger?.reserved, 2);
   assert.deepEqual(
     ctx.inventoryLogs.map((log) => log.eventType),
-    ["reserve", "deduct"],
+    ["reserve"],
   );
 });
 
-test("pre-order checkout enforces window, decrements cap, creates tracker, and sets status", async (t) => {
+test("pre-order COD checkout waits for its Razorpay advance before confirmation", async (t) => {
   const ctx = patchCheckoutModels({ preOrderRemaining: 2 });
   t.after(ctx.restore);
 
@@ -107,10 +109,9 @@ test("pre-order checkout enforces window, decrements cap, creates tracker, and s
     userId: ctx.userId,
   });
 
-  assert.equal(result.order.status, "pre_order_confirmed");
+  assert.equal(result.order.status, "pending_payment");
   assert.equal(ctx.preOrderRemaining, 0);
-  assert.equal(ctx.productionTrackers.length, 1);
-  assert.equal(ctx.productionTrackers[0]?.stage, "order_received");
+  assert.equal(ctx.productionTrackers.length, 0);
 
   await assert.rejects(
     createOrderFromCheckout({
@@ -179,6 +180,7 @@ test("mixed cart with a pre-order item still reserves and deducts stock for the 
   const originalStockLedgerFindOneAndUpdate = StockLedger.findOneAndUpdate;
   const originalInventoryLogCreate = InventoryLog.create;
   const originalProductionTrackerCreate = ProductionTracker.create;
+  const loyaltyCtx = patchLoyaltyModels();
 
   const regularLedger = {
     available: 5,
@@ -329,6 +331,7 @@ test("mixed cart with a pre-order item still reserves and deducts stock for the 
       originalStockLedgerFindOneAndUpdate;
     (InventoryLog as unknown as { create: unknown }).create = originalInventoryLogCreate;
     (ProductionTracker as unknown as { create: unknown }).create = originalProductionTrackerCreate;
+    loyaltyCtx.restore();
   });
 
   const result = await createOrderFromCheckout({
@@ -340,16 +343,16 @@ test("mixed cart with a pre-order item still reserves and deducts stock for the 
     userId,
   });
 
-  assert.equal(result.order.status, "pre_order_confirmed");
+  assert.equal(result.order.status, "pending_payment");
   assert.equal(result.order.stockReservations.length, 1);
   assert.equal(result.order.stockReservations[0].sku, regularSku);
-  assert.equal(result.order.stockReservations[0].status, "deducted");
+  assert.equal(result.order.stockReservations[0].status, "reserved");
   assert.equal(regularLedger.available, 4);
-  assert.equal(regularLedger.reserved, 0);
-  assert.equal(productionTrackers.length, 1);
+  assert.equal(regularLedger.reserved, 1);
+  assert.equal(productionTrackers.length, 0);
   assert.equal(
     inventoryLogs.some((log) => log.eventType === "deduct"),
-    true,
+    false,
   );
 });
 
@@ -361,7 +364,7 @@ test("checkout order API creates orders for all four payment methods", async (t)
   const token = signAccessToken({ sub: ctx.userId, type: "customer" });
   const cases: Array<[CheckoutInput["paymentMethod"], string]> = [
     ["razorpay", "pending_payment"],
-    ["cod", "cod_confirmed"],
+    ["cod", "pending_payment"],
     ["manual_bank_transfer", "payment_verification_pending"],
     ["upi", "pending_payment"],
   ];
@@ -419,6 +422,41 @@ async function listen(): Promise<{ url: string; close: () => Promise<void> }> {
   };
 }
 
+function patchLoyaltyModels() {
+  const originalUserFindByIdAndUpdate = User.findByIdAndUpdate;
+  const originalUserFindOneAndUpdate = User.findOneAndUpdate;
+  const originalUserFindById = User.findById;
+  const originalRewardLedgerCreate = RewardPointsLedger.create;
+  const originalReferralFindOne = Referral.findOne;
+
+  (User as unknown as { findByIdAndUpdate: unknown }).findByIdAndUpdate = () => ({
+    select: () => Promise.resolve({ rewardPointsBalance: 0 }),
+  });
+  (User as unknown as { findOneAndUpdate: unknown }).findOneAndUpdate = () => ({
+    select: () => Promise.resolve(null),
+  });
+  (User as unknown as { findById: unknown }).findById = () => ({
+    lean: () =>
+      Promise.resolve({ lifetimeOrderValue: 0, rewardPointsBalance: 0, storeCreditBalance: 0 }),
+    select: () => ({ lean: () => Promise.resolve(null) }),
+  });
+  (RewardPointsLedger as unknown as { create: unknown }).create = (payload: unknown) =>
+    Promise.resolve(payload);
+  (Referral as unknown as { findOne: unknown }).findOne = () => Promise.resolve(null);
+
+  return {
+    restore() {
+      (User as unknown as { findByIdAndUpdate: unknown }).findByIdAndUpdate =
+        originalUserFindByIdAndUpdate;
+      (User as unknown as { findOneAndUpdate: unknown }).findOneAndUpdate =
+        originalUserFindOneAndUpdate;
+      (User as unknown as { findById: unknown }).findById = originalUserFindById;
+      (RewardPointsLedger as unknown as { create: unknown }).create = originalRewardLedgerCreate;
+      (Referral as unknown as { findOne: unknown }).findOne = originalReferralFindOne;
+    },
+  };
+}
+
 function patchCheckoutModels(
   options: {
     inventoryAvailable?: number;
@@ -441,6 +479,7 @@ function patchCheckoutModels(
   const originalStockLedgerFindOne = StockLedger.findOne;
   const originalStockLedgerFindOneAndUpdate = StockLedger.findOneAndUpdate;
   const originalInventoryLogCreate = InventoryLog.create;
+  const loyaltyCtx = patchLoyaltyModels();
   const orders: InstanceType<typeof Order>[] = [];
   const paymentSessions: InstanceType<typeof PaymentSession>[] = [];
   const inventoryLedger =
@@ -589,6 +628,7 @@ function patchCheckoutModels(
       (InventoryLog as unknown as { create: unknown }).create = originalInventoryLogCreate;
       (ProductionTracker as unknown as { create: unknown }).create =
         originalProductionTrackerCreate;
+      loyaltyCtx.restore();
     },
   };
 }

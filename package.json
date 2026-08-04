@@ -17,7 +17,9 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "seed:admin": "tsx src/scripts/seedAdmin.ts",
     "seed:storefront": "tsx src/scripts/seedStorefront.ts",
-    "verify:phase4": "tsx src/scripts/verifyPhase4Cloudinary.ts"
+    "verify:phase4": "tsx src/scripts/verifyPhase4Cloudinary.ts",
+    "db:backup": "tsx src/scripts/backupDatabase.ts",
+    "db:restore": "tsx src/scripts/restoreDatabase.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

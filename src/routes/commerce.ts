@@ -11,6 +11,7 @@ import {
   mergeGuestCartIntoUserCart,
   removeCartItem,
   removeWishlistItem,
+  setCartAttribution,
   setGiftPackaging,
   updateCartItemPurchaseMode,
   updateCartItemQuantity,
@@ -104,6 +105,27 @@ commerceRouter.delete(
       res.json({
         cart: await removeCartItem(getCommerceIdentity(req), String(req.params.lineItemId)),
       });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+commerceRouter.patch(
+  "/cart/attribution",
+  validateRequest({
+    body: z
+      .object({
+        utmSource: z.string().max(120).optional(),
+        utmMedium: z.string().max(120).optional(),
+        utmCampaign: z.string().max(120).optional(),
+        referrer: z.string().max(300).optional(),
+      })
+      .strict(),
+  }),
+  async (req, res, next) => {
+    try {
+      res.json({ cart: await setCartAttribution(getCommerceIdentity(req), req.body) });
     } catch (error) {
       next(error);
     }

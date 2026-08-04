@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { AppError } from "../middleware/errorHandler.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
+import { AbandonedCartEvent } from "../models/AbandonedCartEvent.js";
 import { LowStockAlert } from "../models/LowStockAlert.js";
 import { Order } from "../models/Order.js";
 import { PaymentSession } from "../models/PaymentSession.js";
@@ -48,6 +49,11 @@ adminRouter.get("/dashboard", requireAuth, async (req, res, next) => {
       orderStatusRows,
       paymentMethodRows,
       topProductRows,
+      topCategoryRows,
+      topCollectionRows,
+      repeatCustomerRows,
+      abandonedCartCount,
+      trafficSourceRows,
     ] = await Promise.all([
       Order.countDocuments({
         status: { $in: ["pending_payment", "payment_verification_pending", "confirmed"] },
@@ -131,6 +137,110 @@ adminRouter.get("/dashboard", requireAuth, async (req, res, next) => {
         { $sort: { quantity: -1 } },
         { $limit: 5 },
       ]),
+      Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: windowStart },
+            status: { $in: REVENUE_ORDER_STATUSES },
+          },
+        },
+        { $unwind: "$items" },
+        {
+          $lookup: {
+            from: "products",
+            localField: "items.productId",
+            foreignField: "_id",
+            as: "product",
+          },
+        },
+        { $unwind: "$product" },
+        { $unwind: "$product.categoryIds" },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "product.categoryIds",
+            foreignField: "_id",
+            as: "category",
+          },
+        },
+        { $unwind: "$category" },
+        {
+          $group: {
+            _id: "$category._id",
+            name: { $first: "$category.name" },
+            quantity: { $sum: "$items.quantity" },
+            revenue: { $sum: "$items.lineSubtotal" },
+          },
+        },
+        { $sort: { revenue: -1 } },
+        { $limit: 5 },
+      ]),
+      Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: windowStart },
+            status: { $in: REVENUE_ORDER_STATUSES },
+          },
+        },
+        { $unwind: "$items" },
+        {
+          $lookup: {
+            from: "products",
+            localField: "items.productId",
+            foreignField: "_id",
+            as: "product",
+          },
+        },
+        { $unwind: "$product" },
+        { $unwind: "$product.collectionIds" },
+        {
+          $lookup: {
+            from: "collections",
+            localField: "product.collectionIds",
+            foreignField: "_id",
+            as: "collection",
+          },
+        },
+        { $unwind: "$collection" },
+        {
+          $group: {
+            _id: "$collection._id",
+            name: { $first: "$collection.name" },
+            quantity: { $sum: "$items.quantity" },
+            revenue: { $sum: "$items.lineSubtotal" },
+          },
+        },
+        { $sort: { revenue: -1 } },
+        { $limit: 5 },
+      ]),
+      Order.aggregate([
+        { $match: { userId: { $exists: true }, status: { $in: REVENUE_ORDER_STATUSES } } },
+        { $group: { _id: "$userId", orders: { $sum: 1 } } },
+        {
+          $group: {
+            _id: null,
+            customers: { $sum: 1 },
+            repeatCustomers: { $sum: { $cond: [{ $gt: ["$orders", 1] }, 1, 0] } },
+          },
+        },
+      ]),
+      AbandonedCartEvent.countDocuments({ emittedAt: { $gte: windowStart } }),
+      Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: windowStart },
+            status: { $in: REVENUE_ORDER_STATUSES },
+          },
+        },
+        {
+          $group: {
+            _id: { $ifNull: ["$attribution.utmSource", "direct"] },
+            count: { $sum: 1 },
+            revenue: { $sum: "$totals.grandTotal" },
+          },
+        },
+        { $sort: { revenue: -1 } },
+      ]),
     ]);
 
     const revenueTrend = buildDailyRevenueSeries(trendStart, now, revenueTrendRows);
@@ -142,6 +252,16 @@ adminRouter.get("/dashboard", requireAuth, async (req, res, next) => {
       (sum: number, row: { count: number }) => sum + row.count,
       0,
     );
+    const repeatCustomerSummary = repeatCustomerRows[0] as
+      | { customers: number; repeatCustomers: number }
+      | undefined;
+    const repeatCustomerRate = repeatCustomerSummary?.customers
+      ? repeatCustomerSummary.repeatCustomers / repeatCustomerSummary.customers
+      : 0;
+    const abandonedCartRate =
+      totalOrders30d + abandonedCartCount
+        ? abandonedCartCount / (totalOrders30d + abandonedCartCount)
+        : 0;
 
     res.json({
       summary: {
@@ -154,6 +274,7 @@ adminRouter.get("/dashboard", requireAuth, async (req, res, next) => {
         returnsQueue,
       },
       charts: {
+        abandonedCartRate,
         averageOrderValue30d: totalOrders30d ? Math.round(totalRevenue30d / totalOrders30d) : 0,
         orderStatusBreakdown: orderStatusRows.map((row: { _id: string; count: number }) => ({
           count: row.count,
@@ -166,7 +287,24 @@ adminRouter.get("/dashboard", requireAuth, async (req, res, next) => {
             revenue: row.revenue,
           }),
         ),
+        repeatCustomerRate,
         revenueTrend,
+        topCategories: topCategoryRows.map(
+          (row: { _id: string; name: string; quantity: number; revenue: number }) => ({
+            categoryId: String(row._id),
+            name: row.name,
+            quantity: row.quantity,
+            revenue: row.revenue,
+          }),
+        ),
+        topCollections: topCollectionRows.map(
+          (row: { _id: string; name: string; quantity: number; revenue: number }) => ({
+            collectionId: String(row._id),
+            name: row.name,
+            quantity: row.quantity,
+            revenue: row.revenue,
+          }),
+        ),
         topProducts: topProductRows.map(
           (row: { _id: string; productName: string; quantity: number; revenue: number }) => ({
             productName: row.productName,
@@ -177,12 +315,72 @@ adminRouter.get("/dashboard", requireAuth, async (req, res, next) => {
         ),
         totalOrders30d,
         totalRevenue30d,
+        trafficSourceBreakdown: trafficSourceRows.map(
+          (row: { _id: string; count: number; revenue: number }) => ({
+            count: row.count,
+            revenue: row.revenue,
+            source: row._id,
+          }),
+        ),
       },
     });
   } catch (error) {
     next(error);
   }
 });
+
+adminRouter.get("/dashboard/export.csv", requireAuth, async (req, res, next) => {
+  try {
+    if (req.user?.type !== "admin") {
+      throw new AppError("Permission denied", 403);
+    }
+
+    const rangeDays = Math.min(Math.max(Number(req.query.range) || DASHBOARD_WINDOW_DAYS, 1), 365);
+    const windowStart = new Date(Date.now() - rangeDays * 86_400_000);
+    const orders = await Order.find({ createdAt: { $gte: windowStart } })
+      .sort({ createdAt: -1 })
+      .select(
+        "orderNumber createdAt status paymentMethod totals.grandTotal totals.currencyCode items attribution.utmSource",
+      )
+      .lean();
+
+    const header = [
+      "Order Number",
+      "Date",
+      "Status",
+      "Payment Method",
+      "Item Count",
+      "Grand Total",
+      "Currency",
+      "Traffic Source",
+    ];
+    const rows = orders.map((order) => [
+      order.orderNumber,
+      new Date(order.createdAt).toISOString(),
+      order.status,
+      order.paymentMethod,
+      String(order.items?.length ?? 0),
+      String(order.totals?.grandTotal ?? 0),
+      order.totals?.currencyCode ?? "INR",
+      order.attribution?.utmSource ?? "direct",
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\r\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="orders-export-${rangeDays}d.csv"`);
+    res.send(csv);
+  } catch (error) {
+    next(error);
+  }
+});
+
+function csvEscape(value: string) {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+
+  return value;
+}
 
 function buildDailyRevenueSeries(
   start: Date,

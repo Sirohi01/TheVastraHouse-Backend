@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Types } from "mongoose";
+import { AuditLog } from "../models/AuditLog.js";
 import { InventoryLog } from "../models/InventoryLog.js";
 import { LowStockAlert } from "../models/LowStockAlert.js";
 import { OrderTimeline } from "../models/OrderTimeline.js";
@@ -97,9 +98,11 @@ function patchLifecycleModels(input: { available?: number; reserved?: number } =
   const originalLowStockFindOne = LowStockAlert.findOne;
   const originalLowStockCreate = LowStockAlert.create;
   const originalLowStockUpdateMany = LowStockAlert.updateMany;
+  const originalAuditCreate = AuditLog.create;
   const warehouseId = String(new Types.ObjectId());
   const timeline: Array<Record<string, unknown>> = [];
   const inventoryLogs: Array<Record<string, unknown>> = [];
+  const auditLogs: Array<Record<string, unknown>> = [];
   const ledger = {
     _id: new Types.ObjectId(),
     available: input.available ?? 0,
@@ -148,8 +151,13 @@ function patchLifecycleModels(input: { available?: number; reserved?: number } =
     Promise.resolve(payload);
   (LowStockAlert as unknown as { updateMany: unknown }).updateMany = () =>
     Promise.resolve({ modifiedCount: 0 });
+  (AuditLog as unknown as { create: unknown }).create = (payload: Record<string, unknown>) => {
+    auditLogs.push(payload);
+    return Promise.resolve(payload);
+  };
 
   return {
+    auditLogs,
     inventoryLogs,
     ledger,
     timeline,
@@ -163,6 +171,7 @@ function patchLifecycleModels(input: { available?: number; reserved?: number } =
       (LowStockAlert as unknown as { findOne: unknown }).findOne = originalLowStockFindOne;
       (LowStockAlert as unknown as { create: unknown }).create = originalLowStockCreate;
       (LowStockAlert as unknown as { updateMany: unknown }).updateMany = originalLowStockUpdateMany;
+      (AuditLog as unknown as { create: unknown }).create = originalAuditCreate;
     },
   };
 }
@@ -184,6 +193,9 @@ function buildOrder(input: {
     status: input.status,
     stockReservations: input.stockReservations ?? [],
     userId: new Types.ObjectId(),
+    toObject() {
+      return { ...order };
+    },
   };
 
   return order as Parameters<typeof transitionOrderDocument>[0];

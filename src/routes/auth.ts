@@ -15,7 +15,9 @@ import {
 } from "../services/emailTemplateService.js";
 import { signAccessToken } from "../services/jwtService.js";
 import { mergeGuestCartIntoUserCart } from "../services/cartService.js";
+import { enqueueNotification } from "../services/notificationDispatchService.js";
 import { hashPassword, verifyPassword } from "../services/passwordService.js";
+import { attributeReferral } from "../services/referralService.js";
 import { issueRefreshToken, rotateRefreshToken } from "../services/refreshTokenService.js";
 import { createTotpSecret, verifyTotp } from "../services/totpService.js";
 import { env } from "../config/env.js";
@@ -38,6 +40,7 @@ authRouter.post(
         password: passwordSchema,
         firstName: z.string().min(1).max(80).optional(),
         lastName: z.string().min(1).max(80).optional(),
+        referralCode: z.string().min(3).max(40).optional(),
       })
       .strict(),
   }),
@@ -51,6 +54,11 @@ authRouter.post(
         firstName: req.body.firstName,
         lastName: req.body.lastName,
       });
+
+      if (req.body.referralCode) {
+        await attributeReferral(req.body.referralCode, String(user._id));
+      }
+
       const verificationToken = createOpaqueToken();
 
       await AuthToken.create({
@@ -60,6 +68,13 @@ authRouter.post(
         expiresAt: addMinutes(new Date(), 60),
       });
       const verificationEmail = buildEmailVerificationTemplate(verificationToken);
+      await enqueueNotification({
+        channel: "email",
+        eventType: "email_verification",
+        fallback: verificationEmail,
+        to: user.email,
+        variables: { token: verificationToken },
+      });
 
       res.status(201).json({
         user: serializeUser(user),
@@ -307,6 +322,13 @@ authRouter.post(
           expiresAt: addMinutes(new Date(), 30),
           metadata: resetEmail,
         });
+        await enqueueNotification({
+          channel: "email",
+          eventType: "password_reset",
+          fallback: resetEmail,
+          to: user.email,
+          variables: { token: resetToken },
+        });
       }
 
       res.json({
@@ -374,6 +396,14 @@ authRouter.post(
         purpose: req.body.purpose,
         codeHash: hashOpaqueToken(code),
         expiresAt: addMinutes(new Date(), 10),
+      });
+
+      await enqueueNotification({
+        channel: req.body.target.includes("@") ? "email" : "whatsapp",
+        eventType: "otp",
+        fallback: otpEmail,
+        to: req.body.target,
+        variables: { code },
       });
 
       res

@@ -297,6 +297,24 @@ export async function removeCartItem(identity: CommerceIdentity, lineItemId: str
   return saveCartActivity(cart);
 }
 
+export type CartAttribution = {
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  referrer?: string;
+};
+
+export async function setCartAttribution(identity: CommerceIdentity, attribution: CartAttribution) {
+  const cart = await getOrCreateCart(identity);
+
+  if (!cart.attribution?.utmSource && !cart.attribution?.referrer) {
+    cart.attribution = attribution;
+    await cart.save();
+  }
+
+  return cart;
+}
+
 export async function setGiftPackaging(identity: CommerceIdentity, enabled: boolean) {
   const cart = await getOrCreateCart(identity);
   const fee = await getRuntimeNumberSetting("CART_GIFT_PACKAGING_FEE", env.CART_GIFT_PACKAGING_FEE);
@@ -565,6 +583,20 @@ async function refreshCartLineSnapshots(cart: Awaited<ReturnType<typeof getOrCre
       );
       applySnapshotToLine(line, snapshot);
     } catch {
+      if (mode === "pre_order") {
+        try {
+          const regularSnapshot = await getProductVariantSnapshot(
+            String(line.productId),
+            String(line.variantId),
+            "regular",
+          );
+          applySnapshotToLine(line, regularSnapshot);
+          continue;
+        } catch {
+          // Keep the last snapshot when the product or variant is no longer available at all.
+        }
+      }
+
       line.purchaseMode = mode;
     }
   }

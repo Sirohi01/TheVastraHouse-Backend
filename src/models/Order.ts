@@ -102,6 +102,16 @@ const stockReservationSchema = new Schema(
   { _id: false },
 );
 
+const attributionSchema = new Schema(
+  {
+    utmSource: { type: String, trim: true },
+    utmMedium: { type: String, trim: true },
+    utmCampaign: { type: String, trim: true },
+    referrer: { type: String, trim: true },
+  },
+  { _id: false },
+);
+
 const shipmentSchema = new Schema(
   {
     carrier: { type: String, trim: true },
@@ -148,6 +158,7 @@ const orderSchema = new Schema(
     shipment: shipmentSchema,
     stockReservations: [stockReservationSchema],
     notes: { type: String, trim: true },
+    attribution: attributionSchema,
     balancePaymentNotifiedAt: { type: Date },
   },
   { timestamps: true },
@@ -155,6 +166,7 @@ const orderSchema = new Schema(
 
 orderSchema.index({ userId: 1, createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ "attribution.utmSource": 1, createdAt: -1 });
 
 export type OrderDocument = InferSchemaType<typeof orderSchema>;
 
