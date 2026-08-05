@@ -28,6 +28,7 @@ import { env } from "../config/env.js";
 import { AppError } from "../middleware/errorHandler.js";
 
 const passwordSchema = z.string().min(8).max(128);
+const emailSchema = z.string().trim().email().transform((email) => email.toLowerCase());
 
 export const authRouter = Router();
 
@@ -40,7 +41,7 @@ authRouter.post(
   validateRequest({
     body: z
       .object({
-        email: z.string().email(),
+        email: emailSchema,
         password: passwordSchema,
         firstName: z.string().min(1).max(80).optional(),
         lastName: z.string().min(1).max(80).optional(),
@@ -127,7 +128,7 @@ authRouter.post(
   validateRequest({
     body: z
       .object({
-        email: z.string().email(),
+        email: emailSchema,
         password: passwordSchema,
         totpToken: z.string().length(6).optional(),
       })
@@ -135,9 +136,7 @@ authRouter.post(
   }),
   async (req, res, next) => {
     try {
-      const user = await User.findOne({ email: req.body.email.toLowerCase() }).select(
-        "+passwordHash +totpSecret",
-      );
+      const user = await User.findOne({ email: req.body.email }).select("+passwordHash +totpSecret");
       const ipAddress = req.ip;
       const userAgent = req.header("User-Agent");
 
@@ -236,7 +235,7 @@ authRouter.post(
   validateRequest({
     body: z
       .object({
-        email: z.string().email(),
+        email: emailSchema,
         password: passwordSchema,
         totpToken: z.string().length(6),
       })
@@ -245,7 +244,7 @@ authRouter.post(
   async (req, res, next) => {
     try {
       const user = await User.findOne({
-        email: req.body.email.toLowerCase(),
+        email: req.body.email,
         type: "admin",
       }).select("+passwordHash +totpSecret");
 
@@ -328,11 +327,11 @@ authRouter.post(
   "/forgot-password",
   strictAuthLimit,
   validateRequest({
-    body: z.object({ email: z.string().email() }).strict(),
+    body: z.object({ email: emailSchema }).strict(),
   }),
   async (req, res, next) => {
     try {
-      const user = await User.findOne({ email: req.body.email.toLowerCase() });
+      const user = await User.findOne({ email: req.body.email });
 
       if (user) {
         const resetToken = createOpaqueToken();
