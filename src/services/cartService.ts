@@ -366,11 +366,17 @@ export async function mergeGuestCartIntoUserCart(guestSessionId: string, userId:
         String(line.variantId) === String(guestLine.variantId) &&
         normalizePurchaseMode(line.purchaseMode) === mode,
     );
-    const snapshot = await getProductVariantSnapshot(
-      String(guestLine.productId),
-      String(guestLine.variantId),
-      mode,
-    );
+    let snapshot: ProductVariantSnapshot;
+
+    try {
+      snapshot = await getProductVariantSnapshot(
+        String(guestLine.productId),
+        String(guestLine.variantId),
+        mode,
+      );
+    } catch {
+      continue;
+    }
 
     if (existing) {
       existing.quantity = Math.min(snapshot.stock, existing.quantity + guestLine.quantity);

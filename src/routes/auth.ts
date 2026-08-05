@@ -204,7 +204,7 @@ authRouter.post(
       });
       const guestSessionId = req.header("X-Guest-Session-Id");
 
-      if (guestSessionId) {
+      if (guestSessionId && user.type === "customer") {
         await mergeGuestCartIntoUserCart(guestSessionId, String(user._id));
       }
 

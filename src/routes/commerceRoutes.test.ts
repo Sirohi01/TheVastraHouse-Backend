@@ -341,6 +341,47 @@ test("guest cart merges into logged-in cart without trusting stale quantities", 
   assert.equal(deletedGuestCart, true);
 });
 
+test("guest cart merge skips stale product variants", async (t) => {
+  const originalProductFindOne = Product.findOne;
+  const originalCartFindOne = Cart.findOne;
+  const originalCartDeleteOne = Cart.deleteOne;
+  const productId = new Types.ObjectId();
+  const staleVariantId = new Types.ObjectId();
+  const currentVariantId = new Types.ObjectId();
+  const guestCart = makeCart({
+    guestSessionId: "guest-session-stale-variant",
+    items: [buildCartLine(productId, staleVariantId, 1)],
+  });
+  const userCart = makeCart({
+    userId: new Types.ObjectId(),
+    items: [buildCartLine(productId, currentVariantId, 1)],
+  });
+  let deletedGuestCart = false;
+
+  (Product as unknown as { findOne: unknown }).findOne = () =>
+    chain(buildProduct(productId, currentVariantId, 4));
+  (Cart as unknown as { findOne: unknown }).findOne = (filter: { guestSessionId?: string }) =>
+    Promise.resolve(filter.guestSessionId ? guestCart : userCart);
+  (Cart as unknown as { deleteOne: unknown }).deleteOne = () => {
+    deletedGuestCart = true;
+    return Promise.resolve({ deletedCount: 1 });
+  };
+  t.after(() => {
+    (Product as unknown as { findOne: unknown }).findOne = originalProductFindOne;
+    (Cart as unknown as { findOne: unknown }).findOne = originalCartFindOne;
+    (Cart as unknown as { deleteOne: unknown }).deleteOne = originalCartDeleteOne;
+  });
+
+  const merged = await mergeGuestCartIntoUserCart(
+    "guest-session-stale-variant",
+    String(userCart.userId),
+  );
+
+  assert.equal(merged.items.length, 1);
+  assert.equal(String(merged.items[0].variantId), String(currentVariantId));
+  assert.equal(deletedGuestCart, true);
+});
+
 test("abandoned-cart event emits once for inactive carts", async (t) => {
   const originalCartFind = Cart.find;
   const originalEventCreate = AbandonedCartEvent.create;
