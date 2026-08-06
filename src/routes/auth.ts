@@ -28,7 +28,11 @@ import { env } from "../config/env.js";
 import { AppError } from "../middleware/errorHandler.js";
 
 const passwordSchema = z.string().min(8).max(128);
-const emailSchema = z.string().trim().email().transform((email) => email.toLowerCase());
+const emailSchema = z
+  .string()
+  .trim()
+  .email()
+  .transform((email) => email.toLowerCase());
 
 export const authRouter = Router();
 
@@ -136,7 +140,9 @@ authRouter.post(
   }),
   async (req, res, next) => {
     try {
-      const user = await User.findOne({ email: req.body.email }).select("+passwordHash +totpSecret");
+      const user = await User.findOne({ email: req.body.email }).select(
+        "+passwordHash +totpSecret",
+      );
       const ipAddress = req.ip;
       const userAgent = req.header("User-Agent");
 
