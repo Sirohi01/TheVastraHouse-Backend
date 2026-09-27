@@ -121,6 +121,29 @@ This ledger records continuation work after the previous staged implementation. 
 - Frontend `npm run build`: PASS with the same two warnings.
 - Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
 
+## 2026-09-27 Admin Reviews Moderation
+
+### What Was Done
+
+- Added admin reviews moderation page at `/admin/reviews`.
+- Wired review listing/search/status filtering to `GET /catalog/admin/reviews`.
+- Wired approve/reject/pending moderation notes to `PATCH /catalog/admin/reviews/:id`.
+- Wired deletion to `DELETE /catalog/admin/reviews/:id`.
+- Added Reviews to the live admin sidebar.
+
+### Files Touched
+
+- `frontend/src/lib/reviewsAdmin.ts`
+- `frontend/src/app/admin/reviews/page.tsx`
+- `frontend/src/components/admin/AdminShell.tsx`
+- `backend/docs/16-completion-progress.md`
+
+### Test Status
+
+- Frontend `npm run lint`: PASS with two existing Next `<img>` warnings.
+- Frontend `npm run build`: PASS with the same two warnings.
+- Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
+
 ## 2026-09-27 Public CMS, Contact, Policies, And Blog
 
 ### What Was Done
