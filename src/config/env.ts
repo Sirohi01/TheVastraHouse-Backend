@@ -179,6 +179,30 @@ const parsedEnv = envSchema
         path: ["MONGODB_URI"],
       });
     }
+
+    if (!value.SETTINGS_ENCRYPTION_KEY || value.SETTINGS_ENCRYPTION_KEY.length < 32) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SETTINGS_ENCRYPTION_KEY must be set to at least 32 characters in production",
+        path: ["SETTINGS_ENCRYPTION_KEY"],
+      });
+    }
+
+    if (!value.CRON_SECRET || value.CRON_SECRET.length < 32) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "CRON_SECRET must be set to at least 32 characters in production",
+        path: ["CRON_SECRET"],
+      });
+    }
+
+    if (!value.ADMIN_TOTP_REQUIRED) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "ADMIN_TOTP_REQUIRED must be true in production",
+        path: ["ADMIN_TOTP_REQUIRED"],
+      });
+    }
   })
   .safeParse(process.env);
 

@@ -140,6 +140,28 @@ This ledger records continuation work after the previous staged implementation. 
 - Frontend `npm run build`: PASS.
 - Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
 
+## 2026-09-27 Production Env Hardening
+
+### What Was Done
+
+- Added production fail-fast validation for `SETTINGS_ENCRYPTION_KEY`.
+- Added production fail-fast validation for `CRON_SECRET`.
+- Added production fail-fast validation requiring `ADMIN_TOTP_REQUIRED=true`.
+- Expanded backend `.env.example` to include all current keys from `src/config/env.ts`.
+- Kept secret values as placeholders only.
+
+### Files Touched
+
+- `backend/src/config/env.ts`
+- `backend/.env.example`
+- `backend/docs/16-completion-progress.md`
+
+### Test Status
+
+- Backend `npm run lint`: PASS.
+- Backend `npm run build`: PASS.
+- Backend `npm run test`: PASS, 112 tests.
+
 ## 2026-09-27 Admin Reviews Moderation
 
 ### What Was Done
