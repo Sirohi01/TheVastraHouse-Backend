@@ -5,7 +5,7 @@ import { signAccessToken, verifyAccessToken } from "./jwtService.js";
 import { hashPassword, verifyPassword } from "./passwordService.js";
 import { hasPermission } from "./rbacService.js";
 import { seedRoles } from "./roleSeedService.js";
-import { createTotpSecret } from "./totpService.js";
+import { buildTotpQrCode, createTotpSecret } from "./totpService.js";
 
 test("password hashing verifies correct passwords and rejects wrong passwords", async () => {
   const hash = await hashPassword("Password@123");
@@ -40,6 +40,13 @@ test("TOTP setup produces secret and otpauth URL", () => {
 
   assert.ok(setup.secret.length >= 16);
   assert.ok(setup.otpauthUrl.startsWith("otpauth://totp/"));
+});
+
+test("TOTP QR code renders the otpauth URL as an SVG data URL", async () => {
+  const setup = createTotpSecret("admin@example.com");
+  const qr = await buildTotpQrCode(setup.otpauthUrl);
+
+  assert.ok(qr.startsWith("data:image/svg+xml;base64,"));
 });
 
 test("RBAC denies customers and respects admin permissions and overrides", () => {

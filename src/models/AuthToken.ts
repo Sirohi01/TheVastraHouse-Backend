@@ -6,7 +6,13 @@ const authTokenSchema = new Schema(
     tokenHash: { type: String, required: true, unique: true, select: false },
     type: {
       type: String,
-      enum: ["email-verification", "password-reset", "step-up", "totp-enrolment"],
+      enum: [
+        "email-verification",
+        "password-reset",
+        "step-up",
+        "totp-enrolment",
+        "admin-login-challenge",
+      ],
       required: true,
       index: true,
     },

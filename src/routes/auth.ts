@@ -31,7 +31,12 @@ import {
   rotateRefreshToken,
 } from "../services/refreshTokenService.js";
 import { getRuntimeBooleanSetting } from "../services/runtimeSettingsService.js";
-import { createTotpSecret, verifyTotp } from "../services/totpService.js";
+import {
+  buildTotpQrCode,
+  buildTotpUri,
+  createTotpSecret,
+  verifyTotp,
+} from "../services/totpService.js";
 import { env, isProduction } from "../config/env.js";
 import { AppError } from "../middleware/errorHandler.js";
 
@@ -57,6 +62,12 @@ const otpPurposeSchema = z.enum(["registration", "login", "password-reset", "sen
 const OTP_MAX_ATTEMPTS = 5;
 const OTP_TTL_MINUTES = 10;
 const OTP_RESEND_COOLDOWN_SECONDS = 45;
+const ADMIN_CHALLENGE_TTL_MINUTES = 10;
+const ADMIN_CHALLENGE_MAX_ATTEMPTS = 5;
+const ADMIN_CHALLENGE_EXPIRED = "ADMIN_CHALLENGE_EXPIRED";
+
+const challengeTokenSchema = z.string().min(20).max(200);
+const sixDigitCodeSchema = z.string().regex(/^\d{6}$/, "Enter the 6-digit code");
 
 export const authRouter = Router();
 
@@ -75,6 +86,15 @@ const otpLimit = rateLimit({
   keyPrefix: "otp",
   max: 5,
   windowMs: 10 * 60 * 1000,
+});
+const adminChallengeLimit = rateLimit({
+  identify: (req) => {
+    const token = (req.body as { challengeToken?: unknown } | undefined)?.challengeToken;
+    return typeof token === "string" ? hashOpaqueToken(token) : undefined;
+  },
+  keyPrefix: "admin-challenge",
+  max: 20,
+  windowMs: 15 * 60 * 1000,
 });
 const refreshLimit = rateLimit({ keyPrefix: "auth-refresh", max: 120, windowMs: 15 * 60 * 1000 });
 
@@ -264,27 +284,44 @@ authRouter.post(
       }
 
       if (user.type === "admin" && (await isAdminTotpRequired())) {
-        if (!user.totpEnabled || !user.totpSecret) {
-          await sendTotpEnrolmentCode(user._id, user.email);
-          await recordAdminLogin(user.email, false, "2fa-setup-required", ipAddress, userAgent, user._id, user.type);
-          res.status(403).json({
-            error: {
-              code: "ADMIN_2FA_SETUP_REQUIRED",
-              message:
-                "Two-factor authentication is required. Enter the setup code we emailed you to continue.",
-            },
-          });
-          return;
-        }
+        const needsSetup = !user.totpEnabled || !user.totpSecret;
 
-        if (!req.body.totpToken) {
+        // The password is proven, so hand out a short-lived challenge: the 2FA screens finish the
+        // sign-in with it and never need the password again.
+        if (needsSetup || !req.body.totpToken) {
+          if (user.failedLoginCount) {
+            user.failedLoginCount = 0;
+            await user.save();
+          }
+          const challengeToken = await createAdminChallenge(user._id);
+          const challenge = {
+            challengeToken,
+            challengeExpiresInSeconds: ADMIN_CHALLENGE_TTL_MINUTES * 60,
+          };
+
+          if (needsSetup) {
+            const enrolment = await sendTotpEnrolmentCode(user._id, user.email);
+            await recordAdminLogin(user.email, false, "2fa-setup-required", ipAddress, userAgent, user._id, user.type);
+            res.status(403).json({
+              ...challenge,
+              error: {
+                code: "ADMIN_2FA_SETUP_REQUIRED",
+                message: "Two-factor authentication is required. Enter the setup code we emailed you.",
+              },
+              resendAfterSeconds: enrolment.retryAfterSeconds,
+              ...(exposeDevTokens() && enrolment.code ? { devOnlyEmailCode: enrolment.code } : {}),
+            });
+            return;
+          }
+
           res.status(401).json({
+            ...challenge,
             error: { code: "ADMIN_TOTP_REQUIRED", message: "Enter the 6-digit code from your authenticator app." },
           });
           return;
         }
 
-        if (!(await verifyTotp(req.body.totpToken, user.totpSecret))) {
+        if (!(await verifyTotp(req.body.totpToken, user.totpSecret!))) {
           await recordAdminLogin(user.email, false, "bad-totp", ipAddress, userAgent, user._id, user.type);
           throw new AppError("The authenticator code is incorrect", 401);
         }
@@ -312,88 +349,129 @@ authRouter.post(
 );
 
 /**
- * Step 1 of admin 2FA enrolment: password + emailed code reveals the TOTP secret. Requiring the
- * email code means a leaked password alone cannot enrol an attacker's authenticator.
+ * Admin 2FA enrolment, step 1: the login challenge + emailed code reveals the TOTP secret and QR.
+ * Requiring the email code means a leaked password alone cannot enrol an attacker's authenticator.
+ * Once the email code is accepted, repeating the call (e.g. after a page refresh) re-shows the same
+ * pending secret instead of asking for another code.
  */
 authRouter.post(
   "/admin/totp/setup",
-  strictAuthLimit,
+  adminChallengeLimit,
   validateRequest({
     body: z
-      .object({ email: emailSchema, password: loginPasswordSchema, emailCode: z.string().regex(/^\d{6}$/) })
+      .object({ challengeToken: challengeTokenSchema, emailCode: sixDigitCodeSchema.optional() })
       .strict(),
   }),
   async (req, res, next) => {
     try {
-      const user = await User.findOne({ email: req.body.email, type: "admin" }).select(
-        "+passwordHash +totpSecret",
-      );
-
-      if (!user || !(await verifyPassword(req.body.password, user.passwordHash))) {
-        throw new AppError("Invalid email or password", 401);
-      }
+      const { challenge, emailVerified, user } = await loadAdminChallenge(req.body.challengeToken);
 
       if (user.totpEnabled) {
-        throw new AppError("Two-factor authentication is already enabled", 409);
+        throw new AppError(
+          "Two-factor authentication is already enabled. Sign in again with your authenticator code.",
+          409,
+          ADMIN_CHALLENGE_EXPIRED,
+        );
       }
 
-      const enrolment = await AuthToken.findOneAndUpdate(
-        {
-          expiresAt: { $gt: new Date() },
-          tokenHash: hashOpaqueToken(`${String(user._id)}:${req.body.emailCode}`),
-          type: "totp-enrolment",
-          usedAt: { $exists: false },
-          userId: user._id,
-        },
-        { $set: { usedAt: new Date() } },
-      );
+      if (!emailVerified || !user.totpSecret) {
+        if (!req.body.emailCode) {
+          throw new AppError("Enter the 6-digit code we emailed you.", 400);
+        }
 
-      if (!enrolment) {
-        throw new AppError("The setup code is invalid or has expired", 400);
+        const enrolment = await AuthToken.findOneAndUpdate(
+          {
+            expiresAt: { $gt: new Date() },
+            tokenHash: hashOpaqueToken(`${String(user._id)}:${req.body.emailCode}`),
+            type: "totp-enrolment",
+            usedAt: { $exists: false },
+            userId: user._id,
+          },
+          { $set: { usedAt: new Date() } },
+        );
+
+        if (!enrolment) {
+          await rejectChallengeAttempt(challenge._id, "The email code is incorrect or has expired.");
+        }
+
+        user.totpSecret = createTotpSecret(user.email).secret;
+        await user.save();
+        await AuthToken.updateOne({ _id: challenge._id }, { $set: { "metadata.emailVerified": true } });
       }
 
-      const setup = createTotpSecret(user.email);
-      user.totpSecret = setup.secret;
-      await user.save();
+      const otpauthUrl = buildTotpUri(user.email, user.totpSecret!);
 
-      res.json({ otpauthUrl: setup.otpauthUrl, totpSecret: setup.secret });
+      res.json({
+        accountLabel: user.email,
+        issuer: env.TOTP_ISSUER,
+        otpauthUrl,
+        qrCodeDataUrl: await buildTotpQrCode(otpauthUrl),
+        totpSecret: user.totpSecret,
+      });
     } catch (error) {
       next(error);
     }
   },
 );
 
-/** Step 2: confirm the authenticator app works, which turns 2FA on. */
+/** Step 2: confirm the authenticator app works, which turns 2FA on and completes the sign-in. */
 authRouter.post(
   "/admin/totp/enable",
-  strictAuthLimit,
+  adminChallengeLimit,
   validateRequest({
-    body: z
-      .object({ email: emailSchema, password: loginPasswordSchema, totpToken: z.string().regex(/^\d{6}$/) })
-      .strict(),
+    body: z.object({ challengeToken: challengeTokenSchema, totpToken: sixDigitCodeSchema }).strict(),
   }),
   async (req, res, next) => {
     try {
-      const user = await User.findOne({ email: req.body.email, type: "admin" }).select(
-        "+passwordHash +totpSecret",
-      );
+      const { challenge, emailVerified, user } = await loadAdminChallenge(req.body.challengeToken);
 
-      if (!user || !(await verifyPassword(req.body.password, user.passwordHash))) {
-        throw new AppError("Invalid email or password", 401);
+      if (user.totpEnabled) {
+        throw new AppError(
+          "Two-factor authentication is already enabled. Sign in again with your authenticator code.",
+          409,
+          ADMIN_CHALLENGE_EXPIRED,
+        );
       }
 
-      if (!user.totpSecret) {
-        throw new AppError("Start two-factor setup first", 409);
+      if (!emailVerified || !user.totpSecret) {
+        throw new AppError("Verify the emailed setup code first.", 409);
       }
 
       if (!(await verifyTotp(req.body.totpToken, user.totpSecret))) {
-        throw new AppError("The authenticator code is incorrect", 401);
+        await rejectChallengeAttempt(challenge._id, "The authenticator code is incorrect.");
       }
 
+      await consumeAdminChallenge(challenge._id);
       user.totpEnabled = true;
-      await user.save();
+      res.json(await completeAdminLogin(user, req));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-      res.json({ totpEnabled: true });
+/** Sign-in for admins who already use an authenticator: challenge + current 6-digit code. */
+authRouter.post(
+  "/admin/login/verify",
+  adminChallengeLimit,
+  validateRequest({
+    body: z.object({ challengeToken: challengeTokenSchema, totpToken: sixDigitCodeSchema }).strict(),
+  }),
+  async (req, res, next) => {
+    try {
+      const { challenge, user } = await loadAdminChallenge(req.body.challengeToken);
+
+      if (!user.totpEnabled || !user.totpSecret) {
+        throw new AppError("Two-factor setup is not complete. Sign in again.", 409, ADMIN_CHALLENGE_EXPIRED);
+      }
+
+      if (!(await verifyTotp(req.body.totpToken, user.totpSecret))) {
+        await recordAdminLogin(user.email, false, "bad-totp", req.ip, req.header("User-Agent"), user._id, user.type);
+        await rejectChallengeAttempt(challenge._id, "The authenticator code is incorrect.");
+      }
+
+      await consumeAdminChallenge(challenge._id);
+      res.json(await completeAdminLogin(user, req));
     } catch (error) {
       next(error);
     }
@@ -402,17 +480,30 @@ authRouter.post(
 
 authRouter.post(
   "/admin/totp/resend",
-  strictAuthLimit,
-  validateRequest({ body: z.object({ email: emailSchema, password: loginPasswordSchema }).strict() }),
+  adminChallengeLimit,
+  validateRequest({ body: z.object({ challengeToken: challengeTokenSchema }).strict() }),
   async (req, res, next) => {
     try {
-      const user = await User.findOne({ email: req.body.email, type: "admin" }).select("+passwordHash");
+      const { user } = await loadAdminChallenge(req.body.challengeToken);
 
-      if (user && !user.totpEnabled && (await verifyPassword(req.body.password, user.passwordHash))) {
-        await sendTotpEnrolmentCode(user._id, user.email);
+      if (user.totpEnabled) {
+        throw new AppError("Two-factor authentication is already enabled.", 409, ADMIN_CHALLENGE_EXPIRED);
       }
 
-      res.json({ message: "If two-factor setup is pending, a new code has been emailed." });
+      const enrolment = await sendTotpEnrolmentCode(user._id, user.email);
+
+      if (!enrolment.code) {
+        throw new AppError(
+          `Please wait ${enrolment.retryAfterSeconds} seconds before requesting a new code`,
+          429,
+        );
+      }
+
+      res.json({
+        message: "A new setup code has been emailed.",
+        resendAfterSeconds: enrolment.retryAfterSeconds,
+        ...(exposeDevTokens() ? { devOnlyEmailCode: enrolment.code } : {}),
+      });
     } catch (error) {
       next(error);
     }
@@ -968,7 +1059,31 @@ async function createPasswordResetToken(userId: unknown, email: string) {
   return resetToken;
 }
 
-async function sendTotpEnrolmentCode(userId: unknown, email: string) {
+/**
+ * Emails a fresh enrolment code unless one was sent within the resend cooldown, in which case the
+ * earlier code stays valid and nothing is sent (`code` is undefined).
+ */
+async function sendTotpEnrolmentCode(
+  userId: unknown,
+  email: string,
+): Promise<{ code?: string; retryAfterSeconds: number }> {
+  const recent = (await AuthToken.findOne({
+    createdAt: { $gt: new Date(Date.now() - OTP_RESEND_COOLDOWN_SECONDS * 1000) },
+    expiresAt: { $gt: new Date() },
+    type: "totp-enrolment",
+    usedAt: { $exists: false },
+    userId,
+  })
+    .sort({ createdAt: -1 })
+    .lean()) as { createdAt: Date } | null;
+
+  if (recent) {
+    const wait = Math.ceil(
+      (recent.createdAt.getTime() + OTP_RESEND_COOLDOWN_SECONDS * 1000 - Date.now()) / 1000,
+    );
+    return { retryAfterSeconds: Math.max(1, wait) };
+  }
+
   const code = String(crypto.randomInt(100000, 1000000));
   await AuthToken.updateMany(
     { type: "totp-enrolment", usedAt: { $exists: false }, userId },
@@ -987,6 +1102,102 @@ async function sendTotpEnrolmentCode(userId: unknown, email: string) {
     to: email,
     variables: { code },
   });
+  return { code, retryAfterSeconds: OTP_RESEND_COOLDOWN_SECONDS };
+}
+
+/** Issued once the admin's password is verified; only the latest challenge per admin stays valid. */
+async function createAdminChallenge(userId: unknown) {
+  const challengeToken = createOpaqueToken();
+  await AuthToken.updateMany(
+    { type: "admin-login-challenge", usedAt: { $exists: false }, userId },
+    { $set: { usedAt: new Date() } },
+  );
+  await AuthToken.create({
+    expiresAt: addMinutes(new Date(), ADMIN_CHALLENGE_TTL_MINUTES),
+    metadata: { attempts: 0, emailVerified: false },
+    tokenHash: hashOpaqueToken(challengeToken),
+    type: "admin-login-challenge",
+    userId,
+  });
+  return challengeToken;
+}
+
+function adminChallengeExpired() {
+  return new AppError(
+    "Your sign-in step expired. Enter your email and password again.",
+    401,
+    ADMIN_CHALLENGE_EXPIRED,
+  );
+}
+
+async function loadAdminChallenge(challengeToken: string) {
+  const challenge = await AuthToken.findOne({
+    expiresAt: { $gt: new Date() },
+    tokenHash: hashOpaqueToken(challengeToken),
+    type: "admin-login-challenge",
+    usedAt: { $exists: false },
+  });
+
+  if (!challenge) {
+    throw adminChallengeExpired();
+  }
+
+  const user = await User.findById(challenge.userId).select("+totpSecret");
+
+  if (!user || user.type !== "admin" || user.status !== "active" || user.deactivatedAt || user.anonymizedAt) {
+    await consumeAdminChallenge(challenge._id);
+    throw adminChallengeExpired();
+  }
+
+  const metadata = (challenge.metadata ?? {}) as { emailVerified?: boolean };
+  return { challenge, emailVerified: Boolean(metadata.emailVerified), user };
+}
+
+/** Counts a wrong code against the challenge; after the limit the admin must re-enter the password. */
+async function rejectChallengeAttempt(challengeId: unknown, message: string): Promise<never> {
+  const updated = (await AuthToken.findOneAndUpdate(
+    { _id: challengeId, usedAt: { $exists: false } },
+    { $inc: { "metadata.attempts": 1 } },
+    { new: true },
+  ).lean()) as { metadata?: { attempts?: number } } | null;
+  const attempts = updated?.metadata?.attempts ?? ADMIN_CHALLENGE_MAX_ATTEMPTS;
+
+  if (attempts >= ADMIN_CHALLENGE_MAX_ATTEMPTS) {
+    await consumeAdminChallenge(challengeId);
+    throw new AppError(
+      "Too many incorrect codes. Enter your email and password again.",
+      401,
+      ADMIN_CHALLENGE_EXPIRED,
+    );
+  }
+
+  throw new AppError(`${message} ${ADMIN_CHALLENGE_MAX_ATTEMPTS - attempts} attempt(s) left.`, 400);
+}
+
+/** Single-use: a challenge that was already consumed (e.g. a double submit) cannot mint a second session. */
+async function consumeAdminChallenge(challengeId: unknown) {
+  const consumed = await AuthToken.findOneAndUpdate(
+    { _id: challengeId, usedAt: { $exists: false } },
+    { $set: { usedAt: new Date() } },
+  );
+
+  if (!consumed) {
+    throw adminChallengeExpired();
+  }
+}
+
+async function completeAdminLogin(
+  user: InstanceType<typeof User> & Parameters<typeof serializeUser>[0] & Parameters<typeof issueSession>[0],
+  req: Request,
+) {
+  user.failedLoginCount = 0;
+  user.lockedUntil = undefined;
+  user.lastLoginAt = new Date();
+  await user.save();
+
+  const session = await issueSession(user, req);
+  await recordAdminLogin(user.email, true, undefined, req.ip, req.header("User-Agent"), user._id, user.type);
+  return { ...session, user: serializeUser(user) };
 }
 
 async function isEmailVerificationRequired() {

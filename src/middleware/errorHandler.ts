@@ -5,10 +5,13 @@ import { logger } from "../utils/logger.js";
 
 export class AppError extends Error {
   public readonly statusCode: number;
+  /** Optional machine-readable code clients can branch on. */
+  public readonly code?: string;
 
-  constructor(message: string, statusCode = 500) {
+  constructor(message: string, statusCode = 500, code?: string) {
     super(message);
     this.statusCode = statusCode;
+    this.code = code;
   }
 }
 
@@ -32,6 +35,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
 
   res.status(statusCode).json({
     error: {
+      ...(error instanceof AppError && error.code ? { code: error.code } : {}),
       message:
         statusCode >= 500 && isProduction
           ? "Something went wrong. Please contact support with the request id."
