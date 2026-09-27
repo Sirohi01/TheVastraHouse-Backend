@@ -3,12 +3,12 @@ import test from "node:test";
 import { Product } from "../models/Product.js";
 import { closeExpiredPreOrders } from "./preOrderService.js";
 
-test("pre-order auto-close disables expired and sold-out variants atomically", async (t) => {
+test("pre-order auto-close disables expired and sold-out variants", async (t) => {
   const originalUpdateMany = Product.updateMany;
-  let captured: unknown[] = [];
+  const calls: unknown[][] = [];
   (Product as unknown as { updateMany: unknown }).updateMany = (...args: unknown[]) => {
-    captured = args;
-    return Promise.resolve({ modifiedCount: 3 });
+    calls.push(args);
+    return Promise.resolve({ modifiedCount: calls.length === 1 ? 2 : 1 });
   };
   t.after(() => {
     (Product as unknown as { updateMany: unknown }).updateMany = originalUpdateMany;
@@ -18,17 +18,25 @@ test("pre-order auto-close disables expired and sold-out variants atomically", a
   const result = await closeExpiredPreOrders(now);
 
   assert.deepEqual(result, { productsUpdated: 3 });
-  assert.equal(captured.length, 3);
-  assert.deepEqual(captured[1], { $set: { "variants.$[variant].preOrder.enabled": false } });
-  assert.deepEqual(captured[2], {
+  assert.equal(calls.length, 2);
+
+  const [expired, soldOut] = calls;
+  assert.deepEqual(expired[0], {
+    variants: { $elemMatch: { "preOrder.enabled": true, "preOrder.endAt": { $lt: now } } },
+  });
+  assert.deepEqual(expired[1], { $set: { "variants.$[variant].preOrder.enabled": false } });
+  assert.deepEqual(expired[2], {
+    arrayFilters: [{ "variant.preOrder.enabled": true, "variant.preOrder.endAt": { $lt: now } }],
+  });
+  assert.deepEqual(soldOut[2], {
     arrayFilters: [
-      {
-        $or: [
-          { "variant.preOrder.endAt": { $lt: now } },
-          { "variant.preOrder.remainingQuantity": { $lte: 0 } },
-        ],
-        "variant.preOrder.enabled": true,
-      },
+      { "variant.preOrder.enabled": true, "variant.preOrder.remainingQuantity": { $lte: 0 } },
     ],
   });
+
+  // Each arrayFilter must be castable by Mongoose: plain paths only, no top-level `$or`.
+  for (const call of calls) {
+    const [filter] = (call[2] as { arrayFilters: Record<string, unknown>[] }).arrayFilters;
+    assert.ok(Object.keys(filter).every((key) => key.startsWith("variant.")));
+  }
 });
