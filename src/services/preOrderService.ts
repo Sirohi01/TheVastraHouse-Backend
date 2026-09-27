@@ -54,34 +54,23 @@ export function assertPreOrderWindow(preOrder?: PreOrderVariantSnapshot, now = n
 }
 
 export async function closeExpiredPreOrders(now = new Date()) {
-  const expiredCondition = {
-    $or: [
-      { "variant.preOrder.endAt": { $lt: now } },
-      { "variant.preOrder.remainingQuantity": { $lte: 0 } },
-    ],
-    "variant.preOrder.enabled": true,
-  };
-  const result = await Product.updateMany(
-    {
-      variants: {
-        $elemMatch: {
-          $or: [{ "preOrder.endAt": { $lt: now } }, { "preOrder.remainingQuantity": { $lte: 0 } }],
-          "preOrder.enabled": true,
-        },
-      },
-    },
-    { $set: { "variants.$[variant].preOrder.enabled": false } },
-    { arrayFilters: [expiredCondition] },
-  );
-  return { productsUpdated: result.modifiedCount };
-}
+  const closeReasons = [
+    { "preOrder.endAt": { $lt: now } },
+    { "preOrder.remainingQuantity": { $lte: 0 } },
+  ];
+  let productsUpdated = 0;
 
-export function startPreOrderAutoCloseJob(intervalMs = 5 * 60 * 1000) {
-  const run = () => void closeExpiredPreOrders().catch(() => undefined);
-  run();
-  const timer = setInterval(run, intervalMs);
-  timer.unref();
-  return timer;
+  for (const reason of closeReasons) {
+    const [path, condition] = Object.entries(reason)[0];
+    const result = await Product.updateMany(
+      { variants: { $elemMatch: { "preOrder.enabled": true, [path]: condition } } },
+      { $set: { "variants.$[variant].preOrder.enabled": false } },
+      { arrayFilters: [{ "variant.preOrder.enabled": true, [`variant.${path}`]: condition }] },
+    );
+    productsUpdated += result.modifiedCount;
+  }
+
+  return { productsUpdated };
 }
 
 export async function reservePreOrderSlots(
