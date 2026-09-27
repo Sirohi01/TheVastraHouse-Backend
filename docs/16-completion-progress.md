@@ -52,6 +52,75 @@ This ledger records continuation work after the previous staged implementation. 
 - Frontend `npm run typecheck`: PASS.
 - Frontend `npm run lint`: PASS with two existing Next `<img>` warnings.
 
+## 2026-09-27 Step 0 Route Backlog
+
+### What Was Done
+
+- Confirmed both repos had no uncommitted work after local commits:
+  - Backend commit `4aa24cf` (`Complete backend commerce platform surfaces`).
+  - Frontend commit `57012d0` (`Add storefront account SEO and admin growth surfaces`).
+- Scanned every backend `src/routes/*.ts` route and current frontend API callers.
+- Mapped covered routes to existing frontend callers by module:
+  - Auth: login/register/forgot/reset/verify/refresh/logout/me/preferences/sessions are called by auth, account, and API helpers.
+  - Catalog/public: products, PDP, reviews, categories, collections, search, sitemap, SEO settings are called by shop/PDP/taxonomy/search/SEO/sitemap code.
+  - Catalog admin: products/category/collection/tag lookups and CRUD are called by admin catalog/products.
+  - Commerce: cart/wishlist/gift packaging/gift card validation/attribution are called by cart/header/wishlist/checkout.
+  - Checkout: preview/order creation/Razorpay config/confirm/order detail/balance payment are called by checkout/confirmation.
+  - Orders admin and tracking: admin list/detail/status/shipment/cancel/bulk plus public tracking are called by admin orders and tracking pages.
+  - Payments admin/customer: settings, sessions, verification queue, webhook events, approve/reject/history, Razorpay/manual/COD/UPI are called by payment/admin/history components.
+  - Inventory/manufacturing/documents/returns/settings/notifications/access-control/admin dashboard/media/CMS legacy are called by existing admin/customer components.
+  - Account overview/addresses/rewards/privacy/sessions/preferences are called by new account pages.
+  - Marketing, CRM, and content SEO routes are called by the new admin growth workspaces.
+
+### Unused Route Backlog
+
+- `POST /account/gift-cards/purchase`: no customer gift-card purchase UI yet.
+- `POST /account/wholesale/apply`: no customer wholesale application UI yet.
+- `GET /account/support`, `GET /account/support/:ticketNumber`, `POST /account/support/:ticketNumber/replies`: no customer support-ticket UI yet.
+- `POST /account/privacy/export`, `GET /account/privacy/export/:requestNumber`, `POST /account/privacy/delete`: privacy page lists requests, but export/delete step-up actions are not yet wired.
+- `GET /catalog/reviews/mine`, `PATCH /catalog/reviews/:id`: no customer review management UI yet.
+- `POST /catalog/admin/products/recompute-badges`: no admin product badge recompute button yet.
+- `GET /catalog/admin/reviews`, `PATCH /catalog/admin/reviews/:id`: no full reviews moderation screen yet.
+- `GET /content/blog`, `GET /content/blog/taxonomy`, `GET /content/blog/:slug`: no public blog list/detail pages yet.
+- `GET/POST/PATCH/DELETE /content/admin/pages`: no first-class CMS page editor beyond legacy section content yet.
+- `GET/POST/PATCH/DELETE /content/admin/blog`, `GET /content/admin/blog/meta`, blog category/author routes: no full blog editor yet.
+- `PATCH/DELETE /content/admin/redirects/:id`: SEO workspace can create/list redirects, but edit/delete controls are not wired yet.
+- CRM detail/update routes (`GET /crm/customers/:id`, notes, segment recompute, ticket detail/reply/status, privacy action): admin CRM list exists, but detail/action flows are incomplete.
+- Marketing detail/action routes (`coupon redemptions`, coupon edit/delete, campaign edit/audience/send/cancel, automation edit, segments preview/create/delete, newsletter CSV export): marketing workspace lists/creates basic records only.
+- `GET /engagement/banner`: no storefront caller yet.
+- `POST /engagement/contact`, support/newsletter/back-in-stock/public engagement routes are partially covered; contact page is still missing.
+- Loyalty admin non-gift-card routes (tiers/rules/referral/store-credit actions): admin gift-card issue exists, but loyalty/referral management is incomplete.
+- `POST /system/*`: maintenance/scheduler/lock routes have no admin UI and should remain operational/admin-only.
+
+### Test Status
+
+- Route scan only; no code checks required for this ledger update.
+
+## 2026-09-27 Customer Order Detail Frontend
+
+### What Was Done
+
+- Added `/account/orders/[id]` customer order detail page.
+- Wired the page to `GET /orders/me/:orderNumber` and `POST /orders/me/:orderNumber/cancel`.
+- Added customer-facing order detail helpers for timeline, payment session, shipment/tracking, refunds, and issued documents.
+- Added invoice/credit-note PDF download buttons via the existing documents API.
+- Added customer actions for pay balance, cancel order, and request return where order status allows.
+- Updated `/account/orders` links to point to the new account order detail route.
+
+### Files Touched
+
+- `frontend/src/lib/orders.ts`
+- `frontend/src/components/account/AccountOrderDetailClient.tsx`
+- `frontend/src/app/account/orders/[id]/page.tsx`
+- `frontend/src/components/account/AccountClient.tsx`
+- `backend/docs/16-completion-progress.md`
+
+### Test Status
+
+- Frontend `npm run lint`: PASS with two existing Next `<img>` warnings.
+- Frontend `npm run build`: PASS with the same two warnings.
+- Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
+
 ## 2026-09-27 Admin Growth Workspaces
 
 ### What Was Done
