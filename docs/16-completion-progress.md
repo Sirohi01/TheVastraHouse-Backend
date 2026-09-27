@@ -121,6 +121,36 @@ This ledger records continuation work after the previous staged implementation. 
 - Frontend `npm run build`: PASS with the same two warnings.
 - Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
 
+## 2026-09-27 Public CMS, Contact, Policies, And Blog
+
+### What Was Done
+
+- Added a server content helper for CMS pages, policies, blog listing/detail, taxonomy, and contact enquiry submission.
+- Added `/contact` with a form that persists enquiries through `POST /engagement/contact`.
+- Added CMS-driven `/faq`, `/pages/[slug]`, `/policies`, and `/policies/[slug]` pages.
+- Added `/blog` listing with pagination/category/tag query support and `/blog/[slug]` detail pages.
+- Added server-rendered metadata, breadcrumbs, WebPage/Article/FAQ JSON-LD where applicable.
+
+### Files Touched
+
+- `frontend/src/lib/content.ts`
+- `frontend/src/components/content/CmsRichPage.tsx`
+- `frontend/src/components/content/ContactForm.tsx`
+- `frontend/src/app/contact/page.tsx`
+- `frontend/src/app/faq/page.tsx`
+- `frontend/src/app/policies/page.tsx`
+- `frontend/src/app/policies/[slug]/page.tsx`
+- `frontend/src/app/pages/[slug]/page.tsx`
+- `frontend/src/app/blog/page.tsx`
+- `frontend/src/app/blog/[slug]/page.tsx`
+- `backend/docs/16-completion-progress.md`
+
+### Test Status
+
+- Frontend `npm run lint`: PASS with two existing Next `<img>` warnings.
+- Frontend `npm run build`: PASS with the same two warnings.
+- Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
+
 ## 2026-09-27 Checkout Saved Addresses And Discounts
 
 ### What Was Done
