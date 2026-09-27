@@ -1,21 +1,44 @@
 import type { NextFunction, Request, Response } from "express";
 import type { Model } from "mongoose";
+import { Types } from "mongoose";
 import { Router } from "express";
 import { z } from "zod";
 import { AppError } from "../middleware/errorHandler.js";
 import { rateLimit } from "../middleware/rateLimit.js";
-import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
+import {
+  attachOptionalUser,
+  requireAuth,
+  requirePermission,
+} from "../middleware/authMiddleware.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { Category } from "../models/Category.js";
 import { Collection } from "../models/Collection.js";
 import { Product } from "../models/Product.js";
+import { StockLedger } from "../models/StockLedger.js";
 import { Warehouse } from "../models/Warehouse.js";
-import { ProductReview } from "../models/ProductReview.js";
 import { Tag } from "../models/Tag.js";
 import { createSlug } from "../services/slugService.js";
 import { generateBarcode, generateSku } from "../services/skuService.js";
 import { computeBadges, recomputeProductBadges } from "../services/merchandisingBadgeService.js";
-import { getPublicSeoSettings } from "../services/runtimeSettingsService.js";
+import { buyerPriceList } from "../services/cartService.js";
+import {
+  assertSkusAvailable,
+  ensureLedgersForVariants,
+  mergeVariantsPreservingIds,
+  serializePublicProducts,
+} from "../services/catalogPublicService.js";
+import { recordSlugChange } from "../services/redirectService.js";
+import {
+  deleteReview,
+  listApprovedReviews,
+  listOwnReviews,
+  listReviewsForModeration,
+  moderateReview,
+  submitReview,
+  updateOwnReview,
+} from "../services/reviewService.js";
+import { invalidateSearchIndex, searchProducts } from "../services/searchService.js";
+import { getPublicSeoSettings } from "../services/seoService.js";
 import { validateGstRate } from "../services/taxValidationService.js";
 import { buildPaginatedResult, parsePagination } from "../utils/pagination.js";
 import { buildQuery } from "../utils/queryBuilder.js";
@@ -38,7 +61,11 @@ const mediaReferenceSchema = z
   .strict();
 
 function isMediaUrl(value: string) {
-  return value.startsWith("/") || z.string().url().safeParse(value).success;
+  return (
+    (value.startsWith("/") && !value.startsWith("//")) ||
+    /^https:\/\//i.test(value) ||
+    /^http:\/\/localhost/i.test(value)
+  );
 }
 
 const preOrderInputSchema = z
@@ -61,18 +88,39 @@ const preOrderInputSchema = z
     message: "Pre-order end date must be after start date",
   });
 
-const seoSchema = z
+export const seoInputSchema = z
   .object({
-    title: z.string().max(70).optional(),
-    description: z.string().max(180).optional(),
-    canonicalUrl: z.string().url().optional(),
+    title: z.string().max(120).optional(),
+    description: z.string().max(320).optional(),
+    keywords: z.array(z.string().min(1).max(60)).max(20).optional(),
+    canonicalUrl: z
+      .string()
+      .max(500)
+      .refine((value) => !value || value.startsWith("/") || /^https:\/\//.test(value), {
+        message: "Canonical URL must be a site path or https URL",
+      })
+      .optional()
+      .or(z.literal("")),
+    robotsIndex: z.boolean().optional(),
+    robotsFollow: z.boolean().optional(),
+    ogTitle: z.string().max(120).optional(),
+    ogDescription: z.string().max(320).optional(),
     ogImage: mediaReferenceSchema.optional(),
+    twitterTitle: z.string().max(120).optional(),
+    twitterDescription: z.string().max(320).optional(),
+    twitterImage: mediaReferenceSchema.optional(),
+    schemaEnabled: z.boolean().optional(),
   })
   .strict()
   .optional();
 
+const faqInputSchema = z
+  .object({ question: z.string().min(3).max(300), answer: z.string().min(2).max(4000) })
+  .strict();
+
 const variantInputSchema = z
   .object({
+    _id: objectIdSchema.optional(),
     color: z.string().max(60).optional(),
     size: z.string().max(40).optional(),
     sku: z.string().max(80).optional(),
@@ -81,7 +129,9 @@ const variantInputSchema = z
     salePrice: z.coerce.number().min(0).optional(),
     costPrice: z.coerce.number().min(0).default(0),
     currencyCode: z.string().length(3).default("INR"),
-    stockPlaceholder: z.coerce.number().int().min(0).default(0),
+    // Opening stock for a brand-new SKU. Existing stock is managed in the Inventory module.
+    initialStock: z.coerce.number().int().min(0).optional(),
+    stockPlaceholder: z.coerce.number().int().min(0).optional(),
     preOrder: preOrderInputSchema.optional(),
     priceTiers: z
       .array(
@@ -97,7 +147,10 @@ const variantInputSchema = z
     media: z.array(mediaReferenceSchema).default([]),
     active: z.boolean().default(true),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.salePrice === undefined || value.salePrice <= value.basePrice, {
+    message: "Sale price cannot exceed the base price",
+  });
 
 const productInputSchema = z
   .object({
@@ -117,7 +170,8 @@ const productInputSchema = z
     tagIds: z.array(objectIdSchema).default([]),
     media: z.array(mediaReferenceSchema).default([]),
     variants: z.array(variantInputSchema).min(1),
-    seo: seoSchema,
+    seo: seoInputSchema,
+    wholesaleMinQuantity: z.coerce.number().int().min(1).optional(),
     badgeOverrides: z
       .object({
         newArrival: z.boolean().optional(),
@@ -148,14 +202,17 @@ const taxonomyInputSchema = z
   .object({
     name: z.string().min(1).max(140),
     slug: z.string().max(180).optional(),
-    description: z.string().optional(),
+    description: z.string().max(2000).optional(),
     banner: mediaReferenceSchema.nullable().optional(),
     active: z.boolean().default(true),
-    seo: seoSchema,
+    seo: seoInputSchema,
+    introContent: z.string().max(4000).optional(),
+    bottomContent: z.string().max(12000).optional(),
+    faqs: z.array(faqInputSchema).max(20).optional(),
+    sortOrder: z.coerce.number().int().optional(),
+    parentId: objectIdSchema.nullable().optional(),
   })
   .strict();
-
-const collectionInputSchema = taxonomyInputSchema;
 
 const tagInputSchema = z
   .object({
@@ -168,86 +225,185 @@ const tagInputSchema = z
 const reviewInputSchema = z
   .object({
     rating: z.coerce.number().int().min(1).max(5),
-    title: z.string().max(120).optional(),
-    body: z.string().min(10).max(2000),
-    guestName: z.string().max(100).optional(),
-    guestEmail: z.string().email().optional(),
-    photos: z.array(mediaReferenceSchema).max(5).default([]),
+    title: z.string().trim().max(120).optional(),
+    body: z.string().trim().min(10, "Please write at least 10 characters").max(2000),
+    photoMediaIds: z.array(objectIdSchema).max(5).optional(),
   })
   .strict();
 
 type CatalogModel = Model<Record<string, unknown>>;
 type TaxonomySchema = z.AnyZodObject;
-type ProductMerchandisingPayload = {
+type ProductMerchandisingPayload = Record<string, unknown> & {
   computedBadges?: Record<string, boolean>;
   relatedProductIds?: unknown[];
   recommendedProductIds?: unknown[];
   frequentlyBoughtTogetherIds?: unknown[];
   completeTheLookIds?: unknown[];
 };
-type ProductSlugPayload = { slug?: string };
-type ProductIdPayload = { _id: unknown };
 
-catalogRouter.get("/products", listPublicProducts);
+const reviewLimit = rateLimit({ keyPrefix: "review-submit", max: 5, windowMs: 60 * 60 * 1000 });
+const searchLimit = rateLimit({ keyPrefix: "catalog-search", max: 120, windowMs: 60 * 1000 });
+
+catalogRouter.use(attachOptionalUser);
+
+catalogRouter.get("/products", searchLimit, listPublicProducts);
 catalogRouter.get("/home", getCatalogHome);
 catalogRouter.get("/filters", getCatalogFilters);
-catalogRouter.get("/search", searchCatalog);
+catalogRouter.get("/search", searchLimit, searchCatalog);
 catalogRouter.get("/sitemap", getSitemapData);
 catalogRouter.get("/seo-settings", getSeoSettings);
 catalogRouter.get("/products/:slug/pdp", getProductPdp);
 catalogRouter.get("/products/:slug/reviews", listProductReviews);
 catalogRouter.post(
   "/products/:slug/reviews",
-  rateLimit({ windowMs: 60_000, max: 5, keyPrefix: "review-submit" }),
+  requireAuth,
+  reviewLimit,
   validateRequest({ body: reviewInputSchema }),
-  submitProductReview,
+  async (req, res, next) => {
+    try {
+      const review = await submitReview({
+        review: req.body,
+        slug: String(req.params.slug),
+        userId: req.user!.id,
+      });
+      res.status(201).json({ moderationStatus: "pending", review });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+catalogRouter.get("/reviews/mine", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ reviews: await listOwnReviews(req.user!.id) });
+  } catch (error) {
+    next(error);
+  }
+});
+catalogRouter.patch(
+  "/reviews/:id",
+  requireAuth,
+  reviewLimit,
+  validateRequest({ params: idParamsSchema, body: reviewInputSchema }),
+  async (req, res, next) => {
+    try {
+      res.json({
+        review: await updateOwnReview({
+          review: req.body,
+          reviewId: String(req.params.id),
+          userId: req.user!.id,
+        }),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 );
 catalogRouter.get("/products/:slug", getProductBySlug);
 catalogRouter.get("/categories/:slug", getCategoryBySlug);
 catalogRouter.get("/collections/:slug", getCollectionBySlug);
-catalogRouter.get(
-  "/admin/lookups",
-  requireAuth,
-  requirePermission({ module: "catalog", action: "manage" }),
-  listAdminLookups,
-);
-catalogRouter.get(
-  "/admin/products",
-  requireAuth,
-  requirePermission({ module: "catalog", action: "manage" }),
-  listProducts,
-);
+
+// ---------- Admin ----------
+const requireCatalogManage = [requireAuth, requirePermission({ module: "catalog", action: "manage" })];
+
+catalogRouter.get("/admin/lookups", ...requireCatalogManage, listAdminLookups);
+catalogRouter.get("/admin/products", ...requireCatalogManage, listProducts);
 catalogRouter.post(
   "/admin/products",
-  requireAuth,
-  requirePermission({ module: "catalog", action: "manage" }),
+  ...requireCatalogManage,
   validateRequest({ body: productInputSchema }),
   createProduct,
 );
 catalogRouter.patch(
   "/admin/products/:id",
-  requireAuth,
-  requirePermission({ module: "catalog", action: "manage" }),
+  ...requireCatalogManage,
   validateRequest({ params: idParamsSchema, body: productInputSchema.partial() }),
   updateProduct,
 );
 catalogRouter.delete(
   "/admin/products/:id",
-  requireAuth,
-  requirePermission({ module: "catalog", action: "manage" }),
+  ...requireCatalogManage,
   validateRequest({ params: idParamsSchema }),
   deleteProduct,
 );
-catalogRouter.post(
-  "/admin/products/recompute-badges",
+catalogRouter.post("/admin/products/recompute-badges", ...requireCatalogManage, recomputeBadges);
+
+catalogRouter.get(
+  "/admin/reviews",
   requireAuth,
   requirePermission({ module: "catalog", action: "manage" }),
-  recomputeBadges,
+  validateRequest({
+    query: z
+      .object({
+        moderationStatus: z.enum(["pending", "approved", "rejected"]).optional(),
+        search: z.string().max(100).optional(),
+        page: z.string().optional(),
+        limit: z.string().optional(),
+      })
+      .strict(),
+  }),
+  async (req, res, next) => {
+    try {
+      const query = req.query as { moderationStatus?: string; search?: string };
+      res.json(
+        await listReviewsForModeration(
+          { moderationStatus: query.moderationStatus, search: query.search },
+          parsePagination(req.query),
+        ),
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+catalogRouter.patch(
+  "/admin/reviews/:id",
+  requireAuth,
+  requirePermission({ module: "catalog", action: "manage" }),
+  validateRequest({
+    params: idParamsSchema,
+    body: z
+      .object({
+        moderationStatus: z.enum(["pending", "approved", "rejected"]),
+        moderationNote: z.string().max(500).optional(),
+      })
+      .strict(),
+  }),
+  async (req, res, next) => {
+    try {
+      res.json({
+        review: await moderateReview({
+          adminUserId: req.user!.id,
+          moderationNote: req.body.moderationNote,
+          moderationStatus: req.body.moderationStatus,
+          reviewId: String(req.params.id),
+        }),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+catalogRouter.delete(
+  "/admin/reviews/:id",
+  requireAuth,
+  requirePermission({ module: "catalog", action: "manage" }),
+  validateRequest({ params: idParamsSchema }),
+  async (req, res, next) => {
+    try {
+      res.json(await deleteReview(String(req.params.id), req.user!.id));
+    } catch (error) {
+      next(error);
+    }
+  },
 );
 
-registerTaxonomyRoutes("categories", Category as CatalogModel, taxonomyInputSchema);
-registerTaxonomyRoutes("collections", Collection as CatalogModel, collectionInputSchema);
+registerTaxonomyRoutes("categories", Category as CatalogModel, taxonomyInputSchema, "/categories/");
+registerTaxonomyRoutes("collections", Collection as CatalogModel, taxonomyInputSchema, "/collections/");
 registerTaxonomyRoutes("tags", Tag as CatalogModel, tagInputSchema);
+
+async function viewerFor(req: Request) {
+  return { priceListCode: await buyerPriceList(req.user?.type === "customer" ? req.user.id : undefined) };
+}
 
 async function listProducts(req: Request, res: Response, next: NextFunction) {
   return listProductsWithVisibility(req, res, next, { publicOnly: false });
@@ -257,27 +413,31 @@ async function listPublicProducts(req: Request, res: Response, next: NextFunctio
   return listProductsWithVisibility(req, res, next, { publicOnly: true });
 }
 
-async function getCatalogHome(_req: Request, res: Response, next: NextFunction) {
+async function getCatalogHome(req: Request, res: Response, next: NextFunction) {
   try {
     const [products, categories, collections] = await Promise.all([
       Product.find({ active: true, status: { $ne: "deleted" } })
         .sort({ createdAt: -1 })
         .limit(12)
-        .select("name slug media variants computedBadges")
+        .select("name slug media variants computedBadges ratingAverage ratingCount")
         .lean(),
       Category.find({ active: true, status: { $ne: "deleted" } })
-        .sort({ name: 1 })
+        .sort({ sortOrder: 1, name: 1 })
         .limit(8)
         .select("name slug description banner")
         .lean(),
       Collection.find({ active: true, status: { $ne: "deleted" } })
-        .sort({ createdAt: -1 })
+        .sort({ sortOrder: 1, createdAt: -1 })
         .limit(8)
         .select("name slug description banner")
         .lean(),
     ]);
 
-    res.json({ products, categories, collections });
+    res.json({
+      categories,
+      collections,
+      products: await serializePublicProducts(products as Array<Record<string, unknown>>, await viewerFor(req)),
+    });
   } catch (error) {
     next(error);
   }
@@ -307,13 +467,14 @@ async function getCatalogFilters(_req: Request, res: Response, next: NextFunctio
         for (const item of product.fabricDetails.split(/[,/]/)) {
           const fabric = item.trim();
 
-          if (fabric.length > 0) {
+          if (fabric.length > 0 && fabric.length <= 40) {
             fabrics.add(fabric);
           }
         }
       }
 
       for (const variant of product.variants ?? []) {
+        if (variant.active === false) continue;
         if (typeof variant.size === "string" && variant.size.length > 0) {
           sizes.add(variant.size);
         }
@@ -373,19 +534,28 @@ async function getCatalogFilters(_req: Request, res: Response, next: NextFunctio
   }
 }
 
+/** Indexable URLs only: noindex entities are excluded from sitemaps. */
 async function getSitemapData(_req: Request, res: Response, next: NextFunction) {
   try {
-    const activeFilter = { active: true, status: { $ne: "deleted" } };
+    const activeFilter = { active: true, status: { $ne: "deleted" }, "seo.robotsIndex": { $ne: false } };
     const [products, categories, collections] = await Promise.all([
-      Product.find(activeFilter).select("slug updatedAt").lean(),
+      Product.find(activeFilter).select("slug updatedAt name media").lean(),
       Category.find(activeFilter).select("slug updatedAt").lean(),
       Collection.find(activeFilter).select("slug updatedAt").lean(),
     ]);
 
     res.json({
-      products: products.map((item) => ({ slug: item.slug, updatedAt: item.updatedAt })),
       categories: categories.map((item) => ({ slug: item.slug, updatedAt: item.updatedAt })),
       collections: collections.map((item) => ({ slug: item.slug, updatedAt: item.updatedAt })),
+      products: products.map((item) => ({
+        images: ((item.media as Array<{ url?: string; altText?: string; type?: string }>) ?? [])
+          .filter((media) => media.type === "image" && media.url?.startsWith("https://"))
+          .slice(0, 8)
+          .map((media) => ({ alt: media.altText, url: media.url })),
+        name: item.name,
+        slug: item.slug,
+        updatedAt: item.updatedAt,
+      })),
     });
   } catch (error) {
     next(error);
@@ -402,7 +572,7 @@ async function getSeoSettings(_req: Request, res: Response, next: NextFunction) 
 
 async function searchCatalog(req: Request, res: Response, next: NextFunction) {
   try {
-    const rawQuery = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const rawQuery = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
 
     if (rawQuery.length < 2) {
       res.json({ results: [] });
@@ -411,12 +581,13 @@ async function searchCatalog(req: Request, res: Response, next: NextFunction) {
 
     const regex = { $regex: escapeRegex(rawQuery), $options: "i" };
     const activeFilter = { active: true, status: { $ne: "deleted" } };
-    const [products, categories, collections, tags] = await Promise.all([
-      Product.find({ ...activeFilter, name: regex })
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .select("name slug media variants")
-        .lean(),
+    const ranked = await searchProducts(rawQuery, { limit: 6, prefix: true });
+    const [rankedProducts, categories, collections, tags] = await Promise.all([
+      ranked.ids.length
+        ? Product.find({ ...activeFilter, _id: { $in: ranked.ids } })
+            .select("name slug media variants.media")
+            .lean()
+        : Promise.resolve([]),
       Category.find({ ...activeFilter, name: regex })
         .sort({ name: 1 })
         .limit(4)
@@ -433,13 +604,19 @@ async function searchCatalog(req: Request, res: Response, next: NextFunction) {
         .select("name slug")
         .lean(),
     ]);
+    const order = new Map(ranked.ids.map((id, index) => [id, index]));
+    const products = [...(rankedProducts as Array<Record<string, unknown>>)].sort(
+      (a, b) => (order.get(String(a._id)) ?? 0) - (order.get(String(b._id)) ?? 0),
+    );
 
     res.json({
       results: [
         ...products.map((item) => ({
           _id: String(item._id),
-          href: `/shop/${item.slug}`,
-          image: item.media?.[0] ?? item.variants?.[0]?.media?.[0],
+          href: `/shop/${String(item.slug)}`,
+          image:
+            (item.media as unknown[] | undefined)?.[0] ??
+            (item.variants as Array<{ media?: unknown[] }> | undefined)?.[0]?.media?.[0],
           kind: "Product",
           title: item.name,
         })),
@@ -464,6 +641,7 @@ async function searchCatalog(req: Request, res: Response, next: NextFunction) {
           title: item.name,
         })),
       ],
+      suggestion: ranked.suggestion,
     });
   } catch (error) {
     next(error);
@@ -478,10 +656,11 @@ async function listProductsWithVisibility(
 ) {
   try {
     const pagination = parsePagination(req.query);
+    const sortParam = typeof req.query.sort === "string" ? req.query.sort : undefined;
     const query = buildQuery(
       {
         filter: normalizeProductFilters(req.query),
-        sort: typeof req.query.sort === "string" ? req.query.sort : undefined,
+        sort: sortParam,
       },
       {
         filters: {
@@ -490,72 +669,146 @@ async function listProductsWithVisibility(
           collectionId: { field: "collectionIds", operators: ["eq"] },
           tagId: { field: "tagIds", operators: ["eq"] },
           active: { field: "active", operators: ["eq"] },
-          search: { field: "name", operators: ["regex"] },
           size: { field: "variants.size", operators: ["eq"] },
           color: { field: "variants.color", operators: ["eq"] },
           fabric: { field: "fabricDetails", operators: ["regex"] },
           preOrder: { field: "variants.preOrder.enabled", operators: ["eq"] },
-          price: { field: "variants.basePrice", operators: ["gte", "lte"] },
         },
         sorts: {
           newest: { field: "createdAt" },
           name: { field: "name" },
-          price: { field: "variants.basePrice" },
+          price: { field: "effectivePrice" },
           bestSelling: { field: "merchandisingMetrics.unitsSold30d" },
+          rating: { field: "ratingAverage" },
         },
       },
     );
-    const filter = {
-      ...query.filter,
+    const filter: Record<string, unknown> = {
+      ...castObjectIds(query.filter),
       ...(options.publicOnly ? { active: true } : {}),
       status: { $ne: "deleted" },
     };
-    const [products, total] = await Promise.all([
-      Product.aggregate([
-        { $match: filter },
-        {
-          $addFields: {
-            hasActivePreOrder: {
-              $anyElementTrue: [
-                {
-                  $map: {
-                    input: "$variants",
-                    as: "variant",
-                    in: {
-                      $and: [
-                        { $eq: ["$$variant.preOrder.enabled", true] },
-                        {
-                          $or: [
-                            { $eq: ["$$variant.preOrder.startAt", null] },
-                            { $lte: ["$$variant.preOrder.startAt", "$$NOW"] },
-                          ],
-                        },
-                        {
-                          $or: [
-                            { $eq: ["$$variant.preOrder.endAt", null] },
-                            { $gte: ["$$variant.preOrder.endAt", "$$NOW"] },
-                          ],
-                        },
-                        { $gt: [{ $ifNull: ["$$variant.preOrder.remainingQuantity", 0] }, 0] },
-                      ],
-                    },
-                  },
-                },
-              ],
+    const priceMatch = buildPriceMatch(req.query);
+    const searchText =
+      typeof req.query.search === "string" && req.query.search.trim().length >= 2
+        ? req.query.search.trim().slice(0, 100)
+        : typeof req.query.q === "string" && req.query.q.trim().length >= 2
+          ? req.query.q.trim().slice(0, 100)
+          : undefined;
+    let rankedIds: string[] | undefined;
+    let suggestion: string | undefined;
+
+    if (searchText) {
+      const ranked = await searchProducts(searchText, { prefix: false });
+      rankedIds = ranked.ids;
+      suggestion = ranked.suggestion;
+
+      if (!options.publicOnly && !rankedIds.length) {
+        // Admin search also matches inactive products by name/SKU.
+        filter.$or = [
+          { name: { $regex: escapeRegex(searchText), $options: "i" } },
+          { "variants.sku": searchText.toUpperCase() },
+        ];
+        rankedIds = undefined;
+      } else {
+        filter._id = { $in: rankedIds.map((id) => new Types.ObjectId(id)) };
+      }
+    }
+
+    // In-stock items first, then open pre-orders (merchandising rule), then the chosen sort.
+    const sort: Record<string, 1 | -1> =
+      rankedIds && !sortParam
+        ? { searchRank: 1 }
+        : {
+            hasActivePreOrder: 1,
+            ...(Object.keys(query.sort).length ? query.sort : { createdAt: -1 }),
+          };
+    const pipeline: Record<string, unknown>[] = [
+      { $match: filter },
+      {
+        $addFields: {
+          effectivePrice: {
+            $min: {
+              $map: {
+                input: "$variants",
+                as: "variant",
+                in: { $ifNull: ["$$variant.salePrice", "$$variant.basePrice"] },
+              },
             },
           },
+          hasActivePreOrder: {
+            $anyElementTrue: [
+              {
+                $map: {
+                  input: "$variants",
+                  as: "variant",
+                  in: {
+                    $and: [
+                      { $eq: ["$$variant.preOrder.enabled", true] },
+                      {
+                        $or: [
+                          { $eq: [{ $ifNull: ["$$variant.preOrder.startAt", null] }, null] },
+                          { $lte: ["$$variant.preOrder.startAt", "$$NOW"] },
+                        ],
+                      },
+                      {
+                        $or: [
+                          { $eq: [{ $ifNull: ["$$variant.preOrder.endAt", null] }, null] },
+                          { $gte: ["$$variant.preOrder.endAt", "$$NOW"] },
+                        ],
+                      },
+                      { $gt: [{ $ifNull: ["$$variant.preOrder.remainingQuantity", 0] }, 0] },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          ...(rankedIds
+            ? { searchRank: { $indexOfArray: [rankedIds, { $toString: "$_id" }] } }
+            : {}),
         },
-        { $sort: { hasActivePreOrder: 1, ...query.sort } },
+      },
+      ...(priceMatch ? [{ $match: priceMatch }] : []),
+    ];
+    const [products, countRows] = await Promise.all([
+      Product.aggregate([
+        ...pipeline,
+        { $sort: sort },
         { $skip: pagination.skip },
         { $limit: pagination.limit },
-      ]),
-      Product.countDocuments(filter),
+      ] as never),
+      Product.aggregate([...pipeline, { $count: "total" }] as never),
     ]);
+    const total = (countRows as Array<{ total: number }>)[0]?.total ?? 0;
+    const data: unknown[] = options.publicOnly
+      ? await serializePublicProducts(products as Array<Record<string, unknown>>, await viewerFor(req))
+      : await attachAdminStock(products as Array<Record<string, unknown>>);
 
-    res.json(buildPaginatedResult(products, total, pagination));
+    res.json({ ...buildPaginatedResult(data, total, pagination), suggestion });
   } catch (error) {
     next(error);
   }
+}
+
+/** Admin list shows real ledger stock per SKU (read-only; edits go through Inventory). */
+async function attachAdminStock(products: Array<Record<string, unknown>>) {
+  const skus = products.flatMap((product) =>
+    ((product.variants as Array<{ sku: string }>) ?? []).map((variant) => variant.sku),
+  );
+  const rows = (await StockLedger.aggregate([
+    { $match: { sku: { $in: skus } } },
+    { $group: { _id: "$sku", available: { $sum: "$available" }, reserved: { $sum: "$reserved" } } },
+  ])) as Array<{ _id: string; available: number; reserved: number }>;
+  const stock = new Map(rows.map((row) => [row._id, row]));
+
+  return products.map((product) => ({
+    ...product,
+    variants: ((product.variants as Array<Record<string, unknown>>) ?? []).map((variant) => ({
+      ...variant,
+      ledgerStock: stock.get(String(variant.sku)) ?? { available: 0, reserved: 0 },
+    })),
+  }));
 }
 
 async function getProductBySlug(req: Request, res: Response, next: NextFunction) {
@@ -574,7 +827,8 @@ async function getProductBySlug(req: Request, res: Response, next: NextFunction)
       throw new AppError("Product not found", 404);
     }
 
-    res.json({ product });
+    const [serialized] = await serializePublicProducts([product as Record<string, unknown>], await viewerFor(req));
+    res.json({ product: serialized });
   } catch (error) {
     next(error);
   }
@@ -596,16 +850,18 @@ async function getProductPdp(req: Request, res: Response, next: NextFunction) {
       throw new AppError("Product not found", 404);
     }
 
+    const viewer = await viewerFor(req);
     const [relatedProducts, recommendedProducts, frequentlyBoughtTogether, completeTheLook] =
       await Promise.all([
-        findCuratedProducts(product.relatedProductIds),
-        findCuratedProducts(product.recommendedProductIds),
-        findCuratedProducts(product.frequentlyBoughtTogetherIds),
-        findCuratedProducts(product.completeTheLookIds),
+        findCuratedProducts(product.relatedProductIds, viewer),
+        findCuratedProducts(product.recommendedProductIds, viewer),
+        findCuratedProducts(product.frequentlyBoughtTogetherIds, viewer),
+        findCuratedProducts(product.completeTheLookIds, viewer),
       ]);
+    const [serialized] = await serializePublicProducts([product], viewer);
 
     res.json({
-      product,
+      product: serialized,
       badges: product.computedBadges,
       merchandising: {
         relatedProducts,
@@ -621,62 +877,7 @@ async function getProductPdp(req: Request, res: Response, next: NextFunction) {
 
 async function listProductReviews(req: Request, res: Response, next: NextFunction) {
   try {
-    const pagination = parsePagination(req.query);
-    const product = (await Product.findOne({
-      slug: req.params.slug,
-      active: true,
-      status: { $ne: "deleted" },
-    })
-      .select("_id")
-      .lean()) as ProductIdPayload | null;
-
-    if (!product) {
-      throw new AppError("Product not found", 404);
-    }
-
-    const filter = {
-      productId: product._id,
-      moderationStatus: "approved",
-      status: { $ne: "deleted" },
-    };
-    const [reviews, total] = await Promise.all([
-      ProductReview.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(pagination.skip)
-        .limit(pagination.limit)
-        .lean(),
-      ProductReview.countDocuments(filter),
-    ]);
-
-    res.json(buildPaginatedResult(reviews, total, pagination));
-  } catch (error) {
-    next(error);
-  }
-}
-
-async function submitProductReview(req: Request, res: Response, next: NextFunction) {
-  try {
-    const product = (await Product.findOne({
-      slug: req.params.slug,
-      active: true,
-      status: { $ne: "deleted" },
-    })
-      .select("_id")
-      .lean()) as ProductIdPayload | null;
-
-    if (!product) {
-      throw new AppError("Product not found", 404);
-    }
-
-    const review = await ProductReview.create({
-      ...req.body,
-      productId: product._id,
-      userId: req.user?.id,
-      moderationStatus: "pending",
-      verifiedPurchase: false,
-    });
-
-    res.status(201).json({ review, moderationStatus: "pending" });
+    res.json(await listApprovedReviews(String(req.params.slug), parsePagination(req.query)));
   } catch (error) {
     next(error);
   }
@@ -718,16 +919,31 @@ async function getCollectionBySlug(req: Request, res: Response, next: NextFuncti
   }
 }
 
+async function assertSlugAvailable(model: CatalogModel, slug: string, excludeId?: string) {
+  const clash = await model
+    .findOne({ slug, ...(excludeId ? { _id: { $ne: excludeId } } : {}) })
+    .select("_id")
+    .lean();
+
+  if (clash) {
+    throw new AppError(`The URL slug "${slug}" is already in use. Choose another.`, 409);
+  }
+}
+
 async function createProduct(req: Request, res: Response, next: NextFunction) {
   try {
     const slug = createSlug(req.body.slug ?? req.body.name);
+    await assertSlugAvailable(Product as unknown as CatalogModel, slug);
     const variants = req.body.variants.map(
       (variant: z.infer<typeof variantInputSchema>, index: number) =>
         normalizeVariantIdentity(variant, slug, index),
     );
-    const product = await Product.create({ ...req.body, slug, variants });
+    await assertSkusAvailable(variants.map((variant: { sku: string }) => variant.sku));
+    const product = await Product.create({ ...req.body, slug, variants: stripStockInput(variants) });
     product.computedBadges = computeBadges(product);
     await product.save();
+    await ensureLedgersForVariants(variants);
+    invalidateSearchIndex();
 
     res.status(201).json({ product });
   } catch (error) {
@@ -737,25 +953,40 @@ async function createProduct(req: Request, res: Response, next: NextFunction) {
 
 async function updateProduct(req: Request, res: Response, next: NextFunction) {
   try {
+    const productId = String(req.params.id);
+    const existing = (await Product.findById(productId).select("slug").lean()) as {
+      slug: string;
+    } | null;
+
+    if (!existing) {
+      throw new AppError("Product not found", 404);
+    }
+
     const update = { ...req.body };
 
     if (update.slug || update.name) {
       update.slug = createSlug(update.slug ?? update.name);
+      await assertSlugAvailable(Product as unknown as CatalogModel, update.slug, productId);
     }
 
-    if (update.variants) {
-      const existingProduct = (await Product.findById(req.params.id)
-        .select("slug")
-        .lean()) as ProductSlugPayload | null;
-      const productSlug = update.slug ?? existingProduct?.slug ?? "product";
+    let incomingVariants: Array<ReturnType<typeof normalizeVariantIdentity>> | undefined;
 
-      update.variants = update.variants.map(
+    if (update.variants) {
+      const productSlug = update.slug ?? existing.slug ?? "product";
+      incomingVariants = update.variants.map(
         (variant: z.infer<typeof variantInputSchema>, index: number) =>
           normalizeVariantIdentity(variant, productSlug, index),
       );
+      await assertSkusAvailable(
+        incomingVariants!.map((variant) => variant.sku),
+        productId,
+      );
+      update.variants = stripStockInput(
+        await mergeVariantsPreservingIds(productId, incomingVariants! as never),
+      );
     }
 
-    const product = await Product.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
+    const product = await Product.findByIdAndUpdate(productId, { $set: update }, { new: true });
 
     if (!product) {
       throw new AppError("Product not found", 404);
@@ -764,6 +995,15 @@ async function updateProduct(req: Request, res: Response, next: NextFunction) {
     product.computedBadges = computeBadges(product);
     await product.save();
 
+    if (incomingVariants) {
+      await ensureLedgersForVariants(incomingVariants);
+    }
+
+    if (update.slug && update.slug !== existing.slug) {
+      await recordSlugChange(`/shop/${existing.slug}`, `/shop/${update.slug}`, req.user?.id);
+    }
+
+    invalidateSearchIndex();
     res.json({ product });
   } catch (error) {
     next(error);
@@ -813,14 +1053,15 @@ function normalizeVariantIdentity(
   productSlug: string,
   index: number,
 ) {
-  const sku =
-    variant.sku ??
+  const sku = (
+    variant.sku?.trim() ||
     generateSku({
       color: variant.color,
       productSlug,
       sequence: index + 1,
       size: variant.size,
-    });
+    })
+  ).toUpperCase();
 
   return {
     ...variant,
@@ -830,11 +1071,16 @@ function normalizeVariantIdentity(
   };
 }
 
+/** Opening stock is written to the inventory ledger, never stored on the product. */
+function stripStockInput<T extends Record<string, unknown>>(variants: T[]) {
+  return variants.map(({ initialStock: _initial, stockPlaceholder: _placeholder, ...variant }) => variant);
+}
+
 async function deleteProduct(req: Request, res: Response, next: NextFunction) {
   try {
     const product = await Product.findByIdAndUpdate(
       req.params.id,
-      { $set: { status: "deleted", deletedAt: new Date() } },
+      { $set: { status: "deleted", deletedAt: new Date(), active: false } },
       { new: true },
     );
 
@@ -842,6 +1088,7 @@ async function deleteProduct(req: Request, res: Response, next: NextFunction) {
       throw new AppError("Product not found", 404);
     }
 
+    invalidateSearchIndex();
     res.json({ deleted: true });
   } catch (error) {
     next(error);
@@ -857,17 +1104,28 @@ async function recomputeBadges(_req: Request, res: Response, next: NextFunction)
   }
 }
 
-async function findCuratedProducts(productIds: unknown) {
+async function findCuratedProducts(productIds: unknown, viewer: { priceListCode?: string }) {
   if (!Array.isArray(productIds) || productIds.length === 0) {
     return [];
   }
 
-  return Product.find({ _id: { $in: productIds }, status: { $ne: "deleted" }, active: true })
-    .select("name slug media variants computedBadges")
+  const products = await Product.find({
+    _id: { $in: productIds },
+    status: { $ne: "deleted" },
+    active: true,
+  })
+    .select("name slug media variants computedBadges ratingAverage ratingCount")
     .lean();
+
+  return serializePublicProducts(products as Array<Record<string, unknown>>, viewer);
 }
 
-function registerTaxonomyRoutes(path: string, model: CatalogModel, schema: TaxonomySchema) {
+function registerTaxonomyRoutes(
+  path: string,
+  model: CatalogModel,
+  schema: TaxonomySchema,
+  publicPrefix?: string,
+) {
   catalogRouter.get(
     `/admin/${path}`,
     requireAuth,
@@ -912,10 +1170,10 @@ function registerTaxonomyRoutes(path: string, model: CatalogModel, schema: Taxon
     validateRequest({ body: schema }),
     async (req, res, next) => {
       try {
-        const item = await model.create({
-          ...req.body,
-          slug: createSlug(req.body.slug ?? req.body.name),
-        });
+        const slug = createSlug(req.body.slug ?? req.body.name);
+        await assertSlugAvailable(model, slug);
+        const item = await model.create({ ...req.body, slug });
+        invalidateSearchIndex();
         res.status(201).json({ item });
       } catch (error) {
         next(error);
@@ -930,18 +1188,26 @@ function registerTaxonomyRoutes(path: string, model: CatalogModel, schema: Taxon
     validateRequest({ params: idParamsSchema, body: schema.partial() }),
     async (req, res, next) => {
       try {
+        const id = String(req.params.id);
         const update = { ...req.body };
+        const existing = (await model.findById(id).select("slug").lean()) as { slug?: string } | null;
 
-        if (update.slug || update.name) {
-          update.slug = createSlug(update.slug ?? update.name);
-        }
-
-        const item = await model.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
-
-        if (!item) {
+        if (!existing) {
           throw new AppError("Catalog item not found", 404);
         }
 
+        if (update.slug || update.name) {
+          update.slug = createSlug(update.slug ?? update.name);
+          await assertSlugAvailable(model, update.slug, id);
+        }
+
+        const item = await model.findByIdAndUpdate(id, { $set: update }, { new: true });
+
+        if (publicPrefix && update.slug && existing.slug && update.slug !== existing.slug) {
+          await recordSlugChange(`${publicPrefix}${existing.slug}`, `${publicPrefix}${update.slug}`, req.user?.id);
+        }
+
+        invalidateSearchIndex();
         res.json({ item });
       } catch (error) {
         next(error);
@@ -958,7 +1224,7 @@ function registerTaxonomyRoutes(path: string, model: CatalogModel, schema: Taxon
       try {
         const item = await model.findByIdAndUpdate(
           req.params.id,
-          { $set: { status: "deleted", deletedAt: new Date() } },
+          { $set: { status: "deleted", deletedAt: new Date(), active: false } },
           { new: true },
         );
 
@@ -966,12 +1232,42 @@ function registerTaxonomyRoutes(path: string, model: CatalogModel, schema: Taxon
           throw new AppError("Catalog item not found", 404);
         }
 
+        invalidateSearchIndex();
         res.json({ deleted: true });
       } catch (error) {
         next(error);
       }
     },
   );
+}
+
+function buildPriceMatch(query: Record<string, unknown>) {
+  const min = Number(query.minPrice);
+  const max = Number(query.maxPrice);
+  const range: Record<string, number> = {};
+
+  if (typeof query.minPrice === "string" && query.minPrice && Number.isFinite(min)) range.$gte = min;
+  if (typeof query.maxPrice === "string" && query.maxPrice && Number.isFinite(max)) range.$lte = max;
+
+  return Object.keys(range).length ? { effectivePrice: range } : undefined;
+}
+
+/** Aggregation $match does not cast strings, so id filters are converted explicitly. */
+function castObjectIds(filter: Record<string, unknown>) {
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(filter)) {
+    if (["brandId", "categoryIds", "collectionIds", "tagIds"].includes(key) && typeof value === "string") {
+      if (!Types.ObjectId.isValid(value)) {
+        throw new AppError(`Invalid ${key} filter`, 400);
+      }
+      result[key] = new Types.ObjectId(value);
+    } else {
+      result[key] = value;
+    }
+  }
+
+  return result;
 }
 
 function normalizeProductFilters(query: Record<string, unknown>): Record<string, unknown> {
@@ -981,22 +1277,17 @@ function normalizeProductFilters(query: Record<string, unknown>): Record<string,
     "collectionId",
     "tagId",
     "active",
-    "search",
     "size",
     "color",
     "preOrder",
   ]);
 
+  if (filter.preOrder !== undefined) {
+    filter.preOrder = filter.preOrder === "true";
+  }
+
   if (typeof query.fabric === "string" && query.fabric.length > 0) {
-    filter["fabric.regex"] = query.fabric;
-  }
-
-  if (typeof query.minPrice === "string" && query.minPrice.length > 0) {
-    filter["price.gte"] = query.minPrice;
-  }
-
-  if (typeof query.maxPrice === "string" && query.maxPrice.length > 0) {
-    filter["price.lte"] = query.maxPrice;
+    filter["fabric.regex"] = query.fabric.slice(0, 60);
   }
 
   return filter;

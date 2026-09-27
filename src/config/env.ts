@@ -29,6 +29,10 @@ const envSchema = z.object({
     .positive()
     .default(15 * 60),
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  REQUIRE_EMAIL_VERIFICATION: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
   ADMIN_TOTP_REQUIRED: z
     .enum(["true", "false"])
     .default("true")
@@ -76,6 +80,8 @@ const envSchema = z.object({
   COMPANY_ADDRESS: z.string().default("India"),
   COMPANY_EMAIL: z.string().default(""),
   COMPANY_GSTIN: z.string().default(""),
+  // State of the registered business address; decides CGST+SGST (intra-state) vs IGST.
+  COMPANY_STATE: z.string().default("Rajasthan"),
   SHIPPING_STANDARD_FEE: z.coerce.number().nonnegative().default(99),
   SHIPPING_EXPRESS_FEE: z.coerce.number().nonnegative().default(199),
   SHIPPING_FREE_THRESHOLD: z.coerce.number().nonnegative().default(2999),
@@ -109,9 +115,72 @@ const envSchema = z.object({
   LOYALTY_TIER_GOLD_THRESHOLD: z.coerce.number().nonnegative().default(50_000),
   LOYALTY_TIER_PLATINUM_THRESHOLD: z.coerce.number().nonnegative().default(150_000),
   REFERRAL_REWARD_AMOUNT: z.coerce.number().nonnegative().default(200),
+  REWARD_POINTS_EXPIRY_DAYS: z.coerce.number().int().nonnegative().default(365),
+  SETTINGS_ENCRYPTION_KEY: z.string().default(""),
+  // Number of reverse proxies in front of the API (Render/Vercel = 1). Needed for real client IPs.
+  TRUST_PROXY_HOPS: z.coerce.number().int().nonnegative().default(1),
+  // Only ever honoured outside production: returns OTP/verification tokens in API responses.
+  EXPOSE_DEV_TOKENS: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  CLAMAV_HOST: z.string().default(""),
+  CLAMAV_PORT: z.coerce.number().int().positive().default(3310),
+  CRM_VIP_LIFETIME_VALUE: z.coerce.number().nonnegative().default(25000),
+  CRM_VIP_ORDER_COUNT: z.coerce.number().int().positive().default(5),
+  CRM_INACTIVE_DAYS: z.coerce.number().int().positive().default(180),
+  CRM_NEW_CUSTOMER_DAYS: z.coerce.number().int().positive().default(90),
+  JOB_LOCK_TTL_SECONDS: z.coerce.number().int().positive().default(240),
+  CRON_SECRET: z.string().default(""),
+  GA4_MEASUREMENT_ID: z.string().default(""),
+  COURIER_PROVIDER: z.enum(["manual", "shiprocket"]).default("manual"),
+  SHIPROCKET_EMAIL: z.string().default(""),
+  SHIPROCKET_PASSWORD: z.string().default(""),
+  SHIPROCKET_WEBHOOK_TOKEN: z.string().default(""),
+  SHIPROCKET_PICKUP_LOCATION: z.string().default("Primary"),
+  FRAUD_MAX_FAILED_PAYMENTS_PER_HOUR: z.coerce.number().int().positive().default(5),
+  FRAUD_MAX_ORDERS_PER_HOUR: z.coerce.number().int().positive().default(8),
+  FRAUD_HIGH_VALUE_COD_THRESHOLD: z.coerce.number().nonnegative().default(15000),
 });
 
-const parsedEnv = envSchema.safeParse(process.env);
+const insecureDefaults = new Set([
+  "dev-access-secret-change-me-at-least-32-chars",
+  "dev-refresh-secret-change-me-at-least-32-chars",
+]);
+
+const parsedEnv = envSchema
+  .superRefine((value, context) => {
+    if (value.NODE_ENV !== "production") {
+      return;
+    }
+
+    for (const key of ["JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET"] as const) {
+      if (insecureDefaults.has(value[key]) || value[key].startsWith("replace")) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${key} must be set to a unique production secret`,
+          path: [key],
+        });
+      }
+    }
+
+    if (value.JWT_ACCESS_SECRET === value.JWT_REFRESH_SECRET) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "JWT access and refresh secrets must differ",
+        path: ["JWT_REFRESH_SECRET"],
+      });
+    }
+
+    if (!process.env.MONGODB_URI) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "MONGODB_URI is required in production",
+        path: ["MONGODB_URI"],
+      });
+    }
+  })
+  .safeParse(process.env);
 
 if (!parsedEnv.success) {
   console.error("Invalid backend environment configuration", parsedEnv.error.flatten().fieldErrors);

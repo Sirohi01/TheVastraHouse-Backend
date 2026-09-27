@@ -16,6 +16,12 @@ import { RewardPointsLedger } from "../models/RewardPointsLedger.js";
 import { StockLedger } from "../models/StockLedger.js";
 import { User } from "../models/User.js";
 import { signAccessToken } from "./jwtService.js";
+import {
+  stubCheckoutAuxiliaryQueries,
+  stubGiftCards,
+  stubPaymentCaptureClaims,
+  stubStatics,
+} from "../testing/commerceStubs.js";
 import { createOrderFromCheckout, previewCheckout, type CheckoutInput } from "./checkoutService.js";
 
 test("checkout preview calculates GST, shipping, gift packaging, and gift card precedence", async (t) => {
@@ -356,33 +362,25 @@ test("mixed cart with a pre-order item still reserves and deducts stock for the 
   );
 });
 
-test("checkout order API creates orders for all four payment methods", async (t) => {
+test("checkout order API accepts only the v1 storefront payment methods", async (t) => {
   const ctx = patchCheckoutModels();
   t.after(ctx.restore);
   const { close, url } = await listen();
   t.after(close);
   const token = signAccessToken({ sub: ctx.userId, type: "customer" });
-  const cases: Array<[CheckoutInput["paymentMethod"], string]> = [
-    ["razorpay", "pending_payment"],
-    ["cod", "pending_payment"],
-    ["manual_bank_transfer", "payment_verification_pending"],
-    ["upi", "pending_payment"],
+  const cases: Array<[CheckoutInput["paymentMethod"], number, string?]> = [
+    ["razorpay", 201, "pending_payment"],
+    ["cod", 201, "pending_payment"],
+    ["manual_bank_transfer", 400],
+    ["upi", 400],
   ];
 
-  for (const [paymentMethod, expectedStatus] of cases) {
+  for (const [paymentMethod, expectedHttpStatus, expectedStatus] of cases) {
     const response = await fetch(`${url}/api/${API_VERSION}/checkout/orders`, {
       body: JSON.stringify({
-        manualScreenshot:
-          paymentMethod === "manual_bank_transfer"
-            ? {
-                type: "image",
-                url: "https://res.cloudinary.com/demo/image/authenticated/payment-proof.jpg",
-              }
-            : undefined,
         paymentMethod,
         shippingAddress: buildAddress(),
         shippingMethod: "standard",
-        upiReference: paymentMethod === "upi" ? "UTR-P11" : undefined,
       }),
       headers: {
         Authorization: `Bearer ${token}`,
@@ -395,10 +393,12 @@ test("checkout order API creates orders for all four payment methods", async (t)
       paymentSession: { orderReference: string };
     };
 
-    assert.equal(response.status, 201);
-    assert.equal(payload.order.status, expectedStatus);
-    assert.equal(payload.order.totals.grandTotal, 3599);
-    assert.equal(payload.paymentSession.orderReference, payload.order.orderNumber);
+    assert.equal(response.status, expectedHttpStatus);
+    if (expectedStatus) {
+      assert.equal(payload.order.status, expectedStatus);
+      assert.equal(payload.order.totals.grandTotal, 3599);
+      assert.equal(payload.paymentSession.orderReference, payload.order.orderNumber);
+    }
   }
 });
 
@@ -443,9 +443,17 @@ function patchLoyaltyModels() {
   (RewardPointsLedger as unknown as { create: unknown }).create = (payload: unknown) =>
     Promise.resolve(payload);
   (Referral as unknown as { findOne: unknown }).findOne = () => Promise.resolve(null);
+  const restoreAuxiliary = stubCheckoutAuxiliaryQueries();
+  const restoreCaptureClaims = stubPaymentCaptureClaims();
+  const restoreUserUpdate = stubStatics(User, {
+    updateOne: () => Promise.resolve({ modifiedCount: 1 }),
+  });
 
   return {
     restore() {
+      restoreUserUpdate();
+      restoreAuxiliary();
+      restoreCaptureClaims();
       (User as unknown as { findByIdAndUpdate: unknown }).findByIdAndUpdate =
         originalUserFindByIdAndUpdate;
       (User as unknown as { findOneAndUpdate: unknown }).findOneAndUpdate =
@@ -459,7 +467,7 @@ function patchLoyaltyModels() {
 
 function patchCheckoutModels(
   options: {
-    inventoryAvailable?: number;
+    inventoryAvailable?: number | null;
     preOrderClosed?: boolean;
     preOrderRemaining?: number;
   } = {},
@@ -480,14 +488,16 @@ function patchCheckoutModels(
   const originalStockLedgerFindOneAndUpdate = StockLedger.findOneAndUpdate;
   const originalInventoryLogCreate = InventoryLog.create;
   const loyaltyCtx = patchLoyaltyModels();
+  const giftCards = stubGiftCards({ GIFT500: 100_000 });
   const orders: InstanceType<typeof Order>[] = [];
   const paymentSessions: InstanceType<typeof PaymentSession>[] = [];
+  // The inventory ledger is authoritative, so every fixture SKU has a ledger row.
   const inventoryLedger =
-    options.inventoryAvailable === undefined
+    options.inventoryAvailable === null
       ? undefined
       : {
           _id: new Types.ObjectId(),
-          available: options.inventoryAvailable,
+          available: options.inventoryAvailable ?? 8,
           damaged: 0,
           incoming: 0,
           lowStockThreshold: 0,
@@ -628,6 +638,7 @@ function patchCheckoutModels(
       (InventoryLog as unknown as { create: unknown }).create = originalInventoryLogCreate;
       (ProductionTracker as unknown as { create: unknown }).create =
         originalProductionTrackerCreate;
+      giftCards.restore();
       loyaltyCtx.restore();
     },
   };
@@ -703,11 +714,15 @@ function buildCart(
 }
 
 function chain<T>(value: T) {
-  return {
+  const query = {
     lean() {
       return Promise.resolve(value);
     },
+    sort() {
+      return query;
+    },
   };
+  return query;
 }
 
 function buildAddress() {

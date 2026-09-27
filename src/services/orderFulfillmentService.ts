@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { Cart } from "../models/Cart.js";
 import { Order } from "../models/Order.js";
 import {
   buildBalancePaymentReceivedTemplate,
@@ -39,6 +40,8 @@ type FulfillableOrder = {
     status: string;
   }>;
   balancePaymentNotifiedAt?: Date;
+  cartId?: unknown;
+  set?: (path: string, value: unknown) => void;
   save: () => Promise<unknown>;
 };
 
@@ -81,6 +84,14 @@ export async function finalizeOrderAfterPayment(input: {
   return order;
 }
 
+/** Wholesale net-terms orders are confirmed on credit, without an upfront capture. */
+export async function confirmOrderOnCredit(order: unknown) {
+  return confirmOrderForFirstTime(order as FulfillableOrder, {
+    actor: { actorType: "system" },
+    payableNow: 0,
+  });
+}
+
 async function confirmOrderForFirstTime(
   order: FulfillableOrder,
   input: { payableNow: number; actor: OrderActor },
@@ -106,8 +117,13 @@ async function confirmOrderForFirstTime(
     await createProductionTrackersForOrder(order);
   }
 
-  await earnPointsForOrder(order);
+  const earned = await earnPointsForOrder(order);
+  if (earned && typeof order.set === "function") {
+    order.set("financials.rewardPointsEarned", earned);
+    await order.save();
+  }
   await qualifyReferral(order);
+  await clearPurchasedCartLines(order);
 
   await sendOrderConfirmationEmail(
     {
@@ -121,6 +137,29 @@ async function confirmOrderForFirstTime(
   await generateConfirmationDocuments(order._id);
 
   return order;
+}
+
+/**
+ * The cart is kept until payment succeeds so an abandoned Razorpay modal does not lose it.
+ * Once paid, only the purchased lines are removed (items added afterwards survive).
+ */
+async function clearPurchasedCartLines(order: FulfillableOrder) {
+  if (!order.cartId) {
+    return;
+  }
+
+  const purchasedVariantIds = order.items.map((item) => item.variantId);
+  await Cart.updateOne(
+    { _id: order.cartId },
+    {
+      $pull: { items: { variantId: { $in: purchasedVariantIds } } },
+      $set: {
+        giftCardRedemptions: [],
+        giftPackaging: { enabled: false, fee: 0 },
+        lastActivityAt: new Date(),
+      },
+    },
+  );
 }
 
 async function notifyBalancePaymentReceived(

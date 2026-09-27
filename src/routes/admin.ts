@@ -8,6 +8,8 @@ import { Product } from "../models/Product.js";
 import { ProductionTracker } from "../models/ProductionTracker.js";
 import { ReturnRequest } from "../models/ReturnRequest.js";
 import { StockLedger } from "../models/StockLedger.js";
+import { SiteVisitDaily } from "../models/SiteVisitDaily.js";
+import { User } from "../models/User.js";
 
 export const adminRouter = Router();
 
@@ -30,11 +32,14 @@ adminRouter.get(
   "/dashboard",
   requireAuth,
   requirePermission({ module: "analytics", action: "read" }),
-  async (_req, res, next) => {
+  async (req, res, next) => {
     try {
       const now = new Date();
-      const windowStart = new Date(now.getTime() - DASHBOARD_WINDOW_DAYS * 86_400_000);
-      const trendStart = new Date(now.getTime() - (TREND_WINDOW_DAYS - 1) * 86_400_000);
+      // Selectable reporting window (FR-RPT-01); defaults to 30 days.
+      const rangeDays = Math.min(Math.max(Number(req.query.range) || DASHBOARD_WINDOW_DAYS, 1), 365);
+      const trendDays = Math.min(Math.max(rangeDays, TREND_WINDOW_DAYS), 90);
+      const windowStart = new Date(now.getTime() - rangeDays * 86_400_000);
+      const trendStart = new Date(now.getTime() - (trendDays - 1) * 86_400_000);
 
       const [
         pendingOrders,
@@ -243,6 +248,17 @@ adminRouter.get(
       ]);
 
       const revenueTrend = buildDailyRevenueSeries(trendStart, now, revenueTrendRows);
+      const windowDate = windowStart.toISOString().slice(0, 10);
+      const [visitRows, newCustomers, totalCustomers] = await Promise.all([
+        SiteVisitDaily.aggregate([
+          { $match: { date: { $gte: windowDate } } },
+          { $group: { _id: "$source", sessions: { $sum: "$sessions" } } },
+          { $sort: { sessions: -1 } },
+        ]) as Promise<Array<{ _id: string; sessions: number }>>,
+        User.countDocuments({ createdAt: { $gte: windowStart }, type: "customer" }),
+        User.countDocuments({ type: "customer" }),
+      ]);
+      const sessions = visitRows.reduce((sum, row) => sum + row.sessions, 0);
       const totalRevenue30d = paymentMethodRows.reduce(
         (sum: number, row: { revenue: number }) => sum + row.revenue,
         0,
@@ -273,6 +289,12 @@ adminRouter.get(
           returnsQueue,
         },
         charts: {
+          rangeDays,
+          sessions,
+          conversionRate: sessions ? paymentMethodRows.reduce((sum: number, row: { count: number }) => sum + row.count, 0) / sessions : 0,
+          newCustomers,
+          totalCustomers,
+          sessionsBySource: visitRows.map((row) => ({ sessions: row.sessions, source: row._id })),
           abandonedCartRate,
           averageOrderValue30d: totalOrders30d ? Math.round(totalRevenue30d / totalOrders30d) : 0,
           orderStatusBreakdown: orderStatusRows.map((row: { _id: string; count: number }) => ({

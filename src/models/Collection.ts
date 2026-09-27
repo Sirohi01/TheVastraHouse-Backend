@@ -1,16 +1,7 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
 import { mediaReferenceSchema } from "./shared/mediaReference.js";
+import { contentFaqSchema, seoFieldsSchema } from "./shared/seo.js";
 import { applySoftDeleteFields } from "./shared/softDelete.js";
-
-const seoSchema = new Schema(
-  {
-    title: { type: String, trim: true },
-    description: { type: String, trim: true },
-    canonicalUrl: { type: String, trim: true },
-    ogImage: mediaReferenceSchema,
-  },
-  { _id: false },
-);
 
 const collectionSchema = new Schema(
   {
@@ -19,7 +10,11 @@ const collectionSchema = new Schema(
     slug: { type: String, required: true, trim: true, lowercase: true },
     description: { type: String, trim: true },
     banner: mediaReferenceSchema,
-    seo: seoSchema,
+    seo: seoFieldsSchema,
+    introContent: { type: String, trim: true, maxlength: 4000 },
+    bottomContent: { type: String, trim: true, maxlength: 12000 },
+    faqs: [contentFaqSchema],
+    sortOrder: { type: Number, default: 0 },
     active: { type: Boolean, default: true },
   },
   { timestamps: true },

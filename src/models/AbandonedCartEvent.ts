@@ -9,6 +9,9 @@ const abandonedCartEventSchema = new Schema(
     subtotal: { type: Number, required: true, min: 0 },
     currencyCode: { type: String, required: true, trim: true, uppercase: true, default: "INR" },
     emittedAt: { type: Date, required: true, default: Date.now },
+    email: { type: String, trim: true, lowercase: true },
+    recoveryEmailSentAt: { type: Date },
+    recoveredOrderNumber: { type: String, trim: true },
   },
   { timestamps: true },
 );

@@ -11,6 +11,7 @@ import {
   calculateProductionCosting,
   createProductionOrder,
   listFabricAlerts,
+  cancelProductionOrder,
   updateProductionOrderStage,
 } from "../services/manufacturingService.js";
 
@@ -248,6 +249,23 @@ manufacturingRouter.patch(
     }
   },
 );
+manufacturingRouter.post(
+  "/production-orders/:id/cancel",
+  validateRequest({
+    params: z.object({ id: objectId }).strict(),
+    body: z.object({ reason: z.string().trim().min(3).max(500) }).strict(),
+  }),
+  async (req, res, next) => {
+    try {
+      res.json({
+        productionOrder: await cancelProductionOrder(String(req.params.id), req.user!.id, req.body.reason),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 manufacturingRouter.patch(
   "/production-orders/:id/stage",
   validateRequest({

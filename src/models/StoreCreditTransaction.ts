@@ -1,7 +1,20 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
-export const storeCreditTransactionTypes = ["issue", "redeem", "admin_adjust"] as const;
-export const storeCreditSourceTypes = ["return", "admin", "order"] as const;
+export const storeCreditTransactionTypes = [
+  "issue",
+  "redeem",
+  "admin_adjust",
+  "restore",
+  "reversal",
+] as const;
+export const storeCreditSourceTypes = [
+  "return",
+  "admin",
+  "order",
+  "cancellation",
+  "referral",
+  "refund",
+] as const;
 
 const storeCreditTransactionSchema = new Schema(
   {

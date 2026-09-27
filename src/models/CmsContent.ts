@@ -24,6 +24,9 @@ const heroSlideSchema = new Schema(
     showOutline: { type: Boolean, default: true },
     textColor: { type: String, trim: true, default: "#ffffff" },
     title: { type: String, trim: true },
+    enabled: { type: Boolean, default: true },
+    startsAt: { type: Date },
+    endsAt: { type: Date },
   },
   { _id: false },
 );

@@ -1,5 +1,5 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
-import { addressSchema } from "./shared/address.js";
+import { addressBookEntrySchema } from "./shared/address.js";
 import { applySoftDeleteFields } from "./shared/softDelete.js";
 
 const permissionOverrideSchema = new Schema(
@@ -23,7 +23,7 @@ const userSchema = new Schema(
     roleId: { type: Schema.Types.ObjectId, ref: "Role" },
     roleSlug: { type: String, trim: true, lowercase: true },
     customerType: { type: String, enum: ["retail", "wholesale"], default: "retail" },
-    addresses: [addressSchema],
+    addresses: [addressBookEntrySchema],
     permissionOverrides: [permissionOverrideSchema],
     failedLoginCount: { type: Number, default: 0 },
     lockedUntil: { type: Date },
@@ -31,6 +31,55 @@ const userSchema = new Schema(
     totpSecret: { type: String, select: false },
     totpEnabled: { type: Boolean, default: false },
     whatsappOptIn: { type: Boolean, default: false },
+    notificationPreferences: {
+      orderUpdatesEmail: { type: Boolean, default: true },
+      orderUpdatesWhatsapp: { type: Boolean, default: false },
+      marketingEmail: { type: Boolean, default: false },
+      marketingWhatsapp: { type: Boolean, default: false },
+      backInStock: { type: Boolean, default: true },
+      reviewRequests: { type: Boolean, default: true },
+    },
+    marketingConsentAt: { type: Date },
+    cookieConsent: {
+      analytics: { type: Boolean, default: false },
+      marketing: { type: Boolean, default: false },
+      updatedAt: { type: Date },
+    },
+    priceListCode: { type: String, trim: true, uppercase: true },
+    wholesaleStatus: {
+      type: String,
+      enum: ["none", "pending", "approved", "rejected"],
+      default: "none",
+    },
+    wholesaleProfile: {
+      businessName: { type: String, trim: true },
+      gstin: { type: String, trim: true, uppercase: true },
+      contactPhone: { type: String, trim: true },
+      notes: { type: String, trim: true },
+      appliedAt: { type: Date },
+      reviewedAt: { type: Date },
+      reviewedBy: { type: Schema.Types.ObjectId, ref: "User" },
+      paymentTerms: { type: String, enum: ["prepaid", "advance_50", "net_15", "net_30"] },
+      creditLimit: { type: Number, min: 0 },
+    },
+    crm: {
+      tags: [{ type: String, trim: true, lowercase: true }],
+      notes: [
+        {
+          body: { type: String, required: true, trim: true },
+          authorId: { type: Schema.Types.ObjectId, ref: "User" },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
+      segment: { type: String, trim: true },
+      orderCount: { type: Number, default: 0 },
+      lastOrderAt: { type: Date },
+      firstOrderAt: { type: Date },
+      segmentComputedAt: { type: Date },
+    },
+    passwordChangedAt: { type: Date },
+    deletionRequestedAt: { type: Date },
+    anonymizedAt: { type: Date },
     storeCreditBalance: { type: Number, default: 0, min: 0 },
     rewardPointsBalance: { type: Number, default: 0, min: 0 },
     lifetimeOrderValue: { type: Number, default: 0, min: 0 },

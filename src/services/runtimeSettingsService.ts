@@ -1,6 +1,7 @@
-import mongoose from "mongoose";
+import mongoose, { type AnyBulkWriteOperation } from "mongoose";
 import { env } from "../config/env.js";
 import { RuntimeSetting } from "../models/RuntimeSetting.js";
+import { decryptSecret, encryptSecret, maskSecret } from "./secretCryptoService.js";
 
 export type RuntimeSettingType = "boolean" | "number" | "secret" | "string" | "url";
 
@@ -206,7 +207,7 @@ export const runtimeSettingDefinitions: RuntimeSettingDefinition[] = [
     "RAZORPAY_KEY_ID",
     "Razorpay key ID",
     "Payments",
-    "secret",
+    "string",
     env.RAZORPAY_KEY_ID ?? "",
     "Razorpay public key identifier. Wrong value breaks gateway payments.",
     false,
@@ -612,41 +613,236 @@ export const runtimeSettingDefinitions: RuntimeSettingDefinition[] = [
     "Store credit issued to the referrer once the referred customer's first order is confirmed.",
     true,
   ),
+  setting(
+    "REWARD_POINTS_EXPIRY_DAYS",
+    "Reward points expiry (days)",
+    "Loyalty",
+    "number",
+    String(env.REWARD_POINTS_EXPIRY_DAYS),
+    "Unspent points expire this many days after they were earned. 0 disables expiry.",
+    true,
+  ),
+  setting(
+    "REQUIRE_EMAIL_VERIFICATION",
+    "Require verified email to sign in",
+    "Security",
+    "boolean",
+    String(env.REQUIRE_EMAIL_VERIFICATION),
+    "Customers must confirm their email before password sign-in (FR-AUTH-01).",
+    true,
+  ),
+  setting(
+    "FRAUD_MAX_FAILED_PAYMENTS_PER_HOUR",
+    "Failed payments per hour before flagging",
+    "Risk",
+    "number",
+    String(env.FRAUD_MAX_FAILED_PAYMENTS_PER_HOUR),
+    "Orders from a customer with this many failed Razorpay attempts in an hour go to the review queue.",
+    true,
+  ),
+  setting(
+    "FRAUD_MAX_ORDERS_PER_HOUR",
+    "Orders per hour before flagging",
+    "Risk",
+    "number",
+    String(env.FRAUD_MAX_ORDERS_PER_HOUR),
+    "Order velocity above this threshold flags the order for review.",
+    true,
+  ),
+  setting(
+    "FRAUD_HIGH_VALUE_COD_THRESHOLD",
+    "High-value COD threshold (₹)",
+    "Risk",
+    "number",
+    String(env.FRAUD_HIGH_VALUE_COD_THRESHOLD),
+    "COD orders at or above this total are flagged for review.",
+    true,
+  ),
+  setting(
+    "COURIER_PROVIDER",
+    "Courier integration",
+    "Shipping",
+    "string",
+    env.COURIER_PROVIDER,
+    "manual = staff enter AWB numbers; shiprocket = create shipments/labels via Shiprocket.",
+    true,
+  ),
+  setting(
+    "SHIPROCKET_EMAIL",
+    "Shiprocket API user email",
+    "Shipping",
+    "string",
+    env.SHIPROCKET_EMAIL,
+    "API user created in Shiprocket (Settings > API).",
+    true,
+  ),
+  setting(
+    "SHIPROCKET_PASSWORD",
+    "Shiprocket API user password",
+    "Shipping",
+    "secret",
+    env.SHIPROCKET_PASSWORD,
+    "Password of the Shiprocket API user. Stored encrypted.",
+    true,
+  ),
+  setting(
+    "SHIPROCKET_WEBHOOK_TOKEN",
+    "Shiprocket webhook token",
+    "Shipping",
+    "secret",
+    env.SHIPROCKET_WEBHOOK_TOKEN,
+    "Shared token Shiprocket sends in the x-api-key header of tracking webhooks.",
+    true,
+  ),
+  setting(
+    "SHIPROCKET_PICKUP_LOCATION",
+    "Shiprocket pickup location name",
+    "Shipping",
+    "string",
+    env.SHIPROCKET_PICKUP_LOCATION,
+    "Must exactly match a pickup address nickname configured in Shiprocket.",
+    true,
+  ),
+  setting(
+    "COMPANY_STATE",
+    "Company registered state",
+    "Company",
+    "string",
+    env.COMPANY_STATE,
+    "State of the GST registration. Invoices use CGST+SGST for buyers in this state and IGST otherwise.",
+    true,
+  ),
+  setting(
+    "CRM_VIP_LIFETIME_VALUE",
+    "VIP segment: lifetime spend (₹)",
+    "CRM",
+    "number",
+    String(env.CRM_VIP_LIFETIME_VALUE),
+    "Customers whose confirmed lifetime spend reaches this value are classified VIP.",
+    true,
+  ),
+  setting(
+    "CRM_VIP_ORDER_COUNT",
+    "VIP segment: order count",
+    "CRM",
+    "number",
+    String(env.CRM_VIP_ORDER_COUNT),
+    "Customers with at least this many confirmed orders are classified VIP.",
+    true,
+  ),
+  setting(
+    "CRM_INACTIVE_DAYS",
+    "Inactive segment: days since last order",
+    "CRM",
+    "number",
+    String(env.CRM_INACTIVE_DAYS),
+    "Past customers with no order in this many days become Inactive (win-back target).",
+    true,
+  ),
+  setting(
+    "CRM_NEW_CUSTOMER_DAYS",
+    "New segment window (days)",
+    "CRM",
+    "number",
+    String(env.CRM_NEW_CUSTOMER_DAYS),
+    "Reporting window used for new-customer counts.",
+    true,
+  ),
+  setting(
+    "GA4_MEASUREMENT_ID",
+    "Google Analytics 4 measurement ID",
+    "Analytics",
+    "string",
+    env.GA4_MEASUREMENT_ID,
+    "G-XXXXXXX. Loaded on the storefront only after the visitor accepts analytics cookies.",
+    true,
+  ),
 ];
+
+/** Keys only a Super Admin may change: they weaken authentication or move money. */
+export const superAdminOnlySettings = new Set([
+  "ADMIN_TOTP_REQUIRED",
+  "REQUIRE_EMAIL_VERIFICATION",
+  "JWT_ACCESS_TTL_SECONDS",
+  "JWT_REFRESH_TTL_DAYS",
+  "RAZORPAY_KEY_ID",
+  "RAZORPAY_KEY_SECRET",
+  "RAZORPAY_WEBHOOK_SECRET",
+  "RAZORPAY_ENABLE_GATEWAY_CALLS",
+  "CLOUDINARY_API_KEY",
+  "CLOUDINARY_API_SECRET",
+  "SMTP_PASS",
+  "WHATSAPP_ACCESS_TOKEN",
+  "SHIPROCKET_PASSWORD",
+  "SHIPROCKET_WEBHOOK_TOKEN",
+]);
 
 export async function listRuntimeSettings() {
   const overrides = await getOverrides();
 
   return runtimeSettingDefinitions.map((definition) => {
     const override = overrides.get(definition.key);
+    const effectiveValue = override ?? envFallback(definition);
+
+    if (definition.type === "secret") {
+      // Secrets are write-only: callers only learn whether a value is configured.
+      return {
+        ...definition,
+        envValue: maskSecret(envFallback(definition)),
+        configured: Boolean(effectiveValue),
+        effectiveValue: maskSecret(effectiveValue),
+        hasOverride: override !== undefined,
+        overrideValue: "",
+      };
+    }
 
     return {
       ...definition,
-      effectiveValue: override ?? definition.envValue,
+      configured: Boolean(effectiveValue),
+      effectiveValue,
       hasOverride: override !== undefined,
       overrideValue: override ?? "",
     };
   });
 }
 
+export const CLEAR_SETTING_VALUE = "__CLEAR__";
+
 export async function saveRuntimeSettings(values: Record<string, string>, updatedBy?: string) {
   const allowed = new Set(runtimeSettingDefinitions.map((item) => item.key));
+  const secretKeys = new Set(
+    runtimeSettingDefinitions.filter((item) => item.type === "secret").map((item) => item.key),
+  );
   const operations = Object.entries(values)
     .filter(([key]) => allowed.has(key))
-    .map(([key, value]) => {
+    .flatMap(([key, value]): AnyBulkWriteOperation[] => {
       const normalizedValue = String(value ?? "").trim();
+      const isSecret = secretKeys.has(key);
 
-      if (!normalizedValue) {
-        return { deleteOne: { filter: { key } } };
+      if (normalizedValue === CLEAR_SETTING_VALUE || (!normalizedValue && !isSecret)) {
+        return [{ deleteOne: { filter: { key } } }];
       }
 
-      return {
-        updateOne: {
-          filter: { key },
-          update: { $set: { key, updatedBy, value: normalizedValue } },
-          upsert: true,
+      // Blank or masked secret input means "keep the stored value".
+      if (isSecret && (!normalizedValue || normalizedValue.startsWith("••••"))) {
+        return [];
+      }
+
+      return [
+        {
+          updateOne: {
+            filter: { key },
+            update: {
+              $set: {
+                key,
+                updatedBy,
+                value: isSecret ? encryptSecret(normalizedValue) : normalizedValue,
+              },
+            },
+            upsert: true,
+          },
         },
-      };
+      ];
     });
 
   if (operations.length) {
@@ -654,36 +850,6 @@ export async function saveRuntimeSettings(values: Record<string, string>, update
   }
 
   return listRuntimeSettings();
-}
-
-export async function getPublicSeoSettings() {
-  const [
-    siteName,
-    defaultTitle,
-    defaultDescription,
-    defaultOgImage,
-    twitterHandle,
-    logoUrl,
-    robotsExtraDisallow,
-  ] = await Promise.all([
-    getRuntimeSetting("SEO_SITE_NAME"),
-    getRuntimeSetting("SEO_DEFAULT_TITLE"),
-    getRuntimeSetting("SEO_DEFAULT_DESCRIPTION"),
-    getRuntimeSetting("SEO_DEFAULT_OG_IMAGE"),
-    getRuntimeSetting("SEO_TWITTER_HANDLE"),
-    getRuntimeSetting("SEO_ORGANIZATION_LOGO_URL"),
-    getRuntimeSetting("SEO_ROBOTS_EXTRA_DISALLOW"),
-  ]);
-
-  return {
-    siteName: siteName ?? env.SEO_SITE_NAME,
-    defaultTitle: defaultTitle ?? env.SEO_DEFAULT_TITLE,
-    defaultDescription: defaultDescription ?? env.SEO_DEFAULT_DESCRIPTION,
-    defaultOgImage: defaultOgImage ?? env.SEO_DEFAULT_OG_IMAGE,
-    twitterHandle: twitterHandle ?? env.SEO_TWITTER_HANDLE,
-    organizationLogoUrl: logoUrl ?? env.SEO_ORGANIZATION_LOGO_URL,
-    robotsExtraDisallow: robotsExtraDisallow ?? env.SEO_ROBOTS_EXTRA_DISALLOW,
-  };
 }
 
 export async function getRuntimeSetting(key: string) {
@@ -694,7 +860,18 @@ export async function getRuntimeSetting(key: string) {
   }
 
   const override = await getOverride(key);
-  return override ?? definition.envValue;
+  return override ?? envFallback(definition);
+}
+
+function envFallback(definition: RuntimeSettingDefinition) {
+  // Read env lazily so values changed after boot (tests, hot config) are respected.
+  const live = (env as Record<string, unknown>)[definition.key];
+
+  if (live === undefined || live === null) {
+    return definition.envValue;
+  }
+
+  return String(live);
 }
 
 export async function getRuntimeNumberSetting(key: string, fallback: number) {
@@ -719,7 +896,7 @@ async function getOverride(key: string) {
   }
 
   const setting = (await RuntimeSetting.findOne({ key }).lean()) as { value?: string } | null;
-  return setting?.value;
+  return setting?.value === undefined ? undefined : decryptSecret(setting.value);
 }
 
 async function getOverrides() {
@@ -731,7 +908,12 @@ async function getOverrides() {
     key: string;
     value: string;
   }>;
-  return new Map(settings.map((item) => [item.key, item.value]));
+  return new Map(
+    settings.flatMap((item) => {
+      const value = decryptSecret(item.value);
+      return value === undefined ? [] : [[item.key, value] as const];
+    }),
+  );
 }
 
 function setting(

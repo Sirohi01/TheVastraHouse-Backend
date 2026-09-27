@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { Types } from "mongoose";
 import { env } from "../config/env.js";
 import { AppError } from "../middleware/errorHandler.js";
@@ -5,7 +6,22 @@ import { Cart } from "../models/Cart.js";
 import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
 import { User } from "../models/User.js";
-import { createManualPayment, createRazorpayPayment, createUpiPayment } from "./paymentService.js";
+import { evaluateCoupon, redeemCoupon, reverseCouponRedemption, type CouponEvaluation } from "./couponService.js";
+import { assessOrderRisk } from "./fraudService.js";
+import { getGiftCardByCode, isGiftCardUsable, redeemGiftCardsForOrder, restoreGiftCardsForOrder } from "./giftCardService.js";
+import {
+  createCreditTermsPayment,
+  createManualPayment,
+  createRazorpayPayment,
+  createUpiPayment,
+} from "./paymentService.js";
+import {
+  assertWholesaleMinimums,
+  creditTermsDueDate,
+  getWholesaleAccount,
+  outstandingCredit,
+  type WholesaleAccount,
+} from "./wholesaleService.js";
 import {
   deductOrderReservedStock,
   getAvailableStockBySku,
@@ -26,13 +42,10 @@ import {
   getRewardPointsBalance,
   pointsToValue,
   redeemPointsByValue,
+  restoreRedeemedPoints,
   valueToPoints,
 } from "./rewardPointsService.js";
-import {
-  getStoreCreditBalance,
-  issueStoreCredit,
-  redeemStoreCredit,
-} from "./storeCreditService.js";
+import { getStoreCreditBalance, redeemStoreCredit, restoreStoreCredit } from "./storeCreditService.js";
 
 export type CheckoutAddress = {
   fullName?: string;
@@ -53,7 +66,7 @@ export type CheckoutInput = {
   shippingAddress: CheckoutAddress;
   billingAddress?: CheckoutAddress;
   shippingMethod: "standard" | "express";
-  paymentMethod: "razorpay" | "cod" | "manual_bank_transfer" | "upi";
+  paymentMethod: "razorpay" | "cod" | "manual_bank_transfer" | "upi" | "credit_terms";
   paymentMode?: "full" | "advance" | "balance";
   payableNow?: number;
   couponCode?: string;
@@ -68,6 +81,9 @@ export type CheckoutInput = {
   upiReference?: string;
   notes?: string;
   whatsappOptIn?: boolean;
+  saveAddress?: boolean;
+  marketingConsent?: boolean;
+  ipAddress?: string;
 };
 
 type CartLine = {
@@ -87,20 +103,31 @@ type ProductLean = {
   _id: Types.ObjectId;
   hsnCode: string;
   gstRate: number;
+  categoryIds?: Types.ObjectId[];
   variants: Array<{
     _id: Types.ObjectId;
     sku: string;
     costPrice?: number;
-    stockPlaceholder?: number;
     active?: boolean;
     preOrder?: PreOrderVariantSnapshot;
   }>;
 };
 
+type CalculationMode = "preview" | "order";
+
 export async function previewCheckout(input: Omit<CheckoutInput, "paymentMethod">) {
   const cart = await loadCheckoutCart(input);
+
+  if (input.guestEmail && !input.userId && cart.contactEmail !== input.guestEmail.toLowerCase()) {
+    cart.contactEmail = input.guestEmail.toLowerCase();
+    cart.marketingConsent = input.marketingConsent === true;
+    await cart.save();
+  }
+
   return calculateOrderTotals(cart, {
     couponCode: input.couponCode,
+    guestEmail: input.guestEmail,
+    mode: "preview",
     rewardValueRequested: input.rewardValueRequested,
     shippingMethod: input.shippingMethod,
     storeCreditRequested: input.storeCreditRequested,
@@ -114,27 +141,57 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
   }
 
   const cart = await loadCheckoutCart(input);
+  await supersedePendingOrdersForCart(cart._id);
   const calculation = await calculateOrderTotals(cart, {
     couponCode: input.couponCode,
+    guestEmail: input.guestEmail,
+    mode: "order",
     rewardValueRequested: input.rewardValueRequested,
     shippingMethod: input.shippingMethod,
     storeCreditRequested: input.storeCreditRequested,
     userId: input.userId,
   });
   const orderNumber = buildOrderNumber();
-  const paymentMode = input.paymentMethod === "cod" ? "advance" : "full";
-  const payableNow =
-    input.paymentMethod === "cod"
-      ? Math.round(calculation.totals.grandTotal * 0.5)
-      : calculation.totals.grandTotal;
+  const wholesale = await getWholesaleAccount(input.userId);
+  await assertPaymentMethodAllowed(input, wholesale, calculation.totals.grandTotal);
+
+  if (wholesale) {
+    await assertWholesaleMinimums(calculation.items);
+  }
+
+  // Secured COD and wholesale "advance_50" terms both collect 50% now via Razorpay.
+  const halfNow =
+    input.paymentMethod === "cod" ||
+    (input.paymentMethod === "razorpay" && wholesale?.paymentTerms === "advance_50");
+  const paymentMode = halfNow ? "advance" : "full";
+  const payableNow = halfNow
+    ? Math.round(calculation.totals.grandTotal * 0.5)
+    : calculation.totals.grandTotal;
   const hasPreOrderItems = calculation.items.some((item) => item.preOrder?.enabled);
   assertCheckoutPaymentMode(input.paymentMode);
+  const risk = await assessOrderRisk({
+    grandTotal: calculation.totals.grandTotal,
+    guestEmail: input.guestEmail,
+    ipAddress: input.ipAddress,
+    paymentMethod: input.paymentMethod,
+    phone: input.shippingAddress.phone,
+    userId: input.userId,
+  });
+
+  if (calculation.totals.grandTotal <= 0) {
+    throw new AppError(
+      "Orders fully covered by credits cannot be placed online. Please contact support.",
+      400,
+    );
+  }
+
   const payment = await createPaymentForOrder(
     input,
     orderNumber,
     calculation.totals.grandTotal,
     payableNow,
     paymentMode,
+    wholesale,
   );
   const status = mapInitialOrderStatus(
     input.paymentMethod,
@@ -161,34 +218,52 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     throw error;
   }
 
-  let redeemedStoreCreditAmount = 0;
+  // Money-moving redemptions. Each step is idempotent/conditional; on failure every
+  // completed step is compensated so no partial debit survives a failed checkout.
+  const completed = {
+    couponRedemptionId: undefined as unknown,
+    giftCards: [] as Array<{ code: string; amount: number }>,
+    rewardPoints: 0,
+    storeCredit: 0,
+  };
 
   try {
+    if (calculation.coupon) {
+      const redemption = await redeemCoupon({
+        evaluation: calculation.coupon,
+        guestEmail: input.guestEmail,
+        orderNumber,
+        userId: input.userId,
+      });
+      completed.couponRedemptionId = redemption._id;
+    }
+
+    if (calculation.giftCardRedemptions.length) {
+      completed.giftCards = await redeemGiftCardsForOrder({
+        orderNumber,
+        redemptions: calculation.giftCardRedemptions,
+      });
+    }
+
     if (input.userId && calculation.totals.storeCreditApplied > 0) {
       await redeemStoreCredit({
         amount: calculation.totals.storeCreditApplied,
         orderNumber,
         userId: input.userId,
       });
-      redeemedStoreCreditAmount = calculation.totals.storeCreditApplied;
+      completed.storeCredit = calculation.totals.storeCreditApplied;
     }
 
     if (input.userId && calculation.rewardPointsRedeemed > 0) {
-      await redeemPointsByValue({
+      const redeemed = await redeemPointsByValue({
         orderNumber,
         requestedValue: calculation.totals.rewardValueApplied,
         userId: input.userId,
       });
+      completed.rewardPoints = redeemed.pointsRedeemed;
     }
   } catch (error) {
-    if (redeemedStoreCreditAmount > 0 && input.userId) {
-      await issueStoreCredit({
-        amount: redeemedStoreCreditAmount,
-        notes: "Checkout rollback: reward point redemption failed",
-        sourceType: "admin",
-        userId: input.userId,
-      });
-    }
+    await compensateRedemptions(input, orderNumber, completed);
     await releaseOrderStock({
       actor: { actorId: checkoutActorId(input), actorType: "customer" },
       referenceId: orderNumber,
@@ -203,12 +278,23 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     attribution: cart.attribution,
     billingAddress: input.billingAddress ?? input.shippingAddress,
     cartId: cart._id,
+    couponCode: calculation.coupon?.code,
+    customerType: calculation.customerType,
+    financials: {
+      couponRedemptionId: completed.couponRedemptionId,
+      giftCardRedemptions: completed.giftCards,
+      rewardPointsRedeemed: completed.rewardPoints,
+      storeCreditRedeemed: completed.storeCredit,
+    },
     items: calculation.items,
     notes: input.notes,
     orderNumber,
     paymentMethod: input.paymentMethod,
     paymentMode,
+    paymentTerms: wholesale?.paymentTerms,
     paymentSessionId: payment.session?._id ?? payment._id,
+    priceListCode: calculation.priceListCode,
+    risk,
     shippingAddress: input.shippingAddress,
     shippingMethod: input.shippingMethod,
     status,
@@ -216,13 +302,19 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
     taxBreakdown: calculation.taxBreakdown,
     totals: calculation.totals,
     ...(input.userId ? { userId: input.userId } : {}),
-    guestEmail: input.guestEmail,
+    guestEmail: input.guestEmail?.toLowerCase(),
     guestSessionId: input.guestSessionId,
     whatsappOptIn: input.whatsappOptIn === true,
   });
 
-  if (input.userId && input.whatsappOptIn === true) {
-    await User.updateOne({ _id: input.userId }, { $set: { whatsappOptIn: true } });
+  if (input.userId) {
+    await rememberCheckoutDetails(input);
+  }
+
+  if (input.paymentMethod === "credit_terms") {
+    const { confirmOrderOnCredit } = await import("./orderFulfillmentService.js");
+    await confirmOrderOnCredit(order);
+    return { gatewayOrder: undefined, order, paymentSession: payment.session ?? payment };
   }
 
   if (stockReservations.length && (status === "confirmed" || status === "pre_order_confirmed")) {
@@ -240,22 +332,71 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
   }
 
   if (status === "confirmed" || status === "pre_order_confirmed") {
-    await earnPointsForOrder(order);
+    const earned = await earnPointsForOrder(order);
+    if (earned) {
+      order.financials = { ...(order.financials ?? {}), rewardPointsEarned: earned };
+      await order.save();
+    }
     await qualifyReferral(order);
   }
 
-  cart.items = [];
-  cart.giftCardRedemptions = [];
-  cart.giftPackaging = { enabled: false, fee: 0 };
-  cart.totals = {
-    currencyCode: calculation.totals.currencyCode,
-    giftCardDiscount: 0,
-    giftPackagingFee: 0,
-    grandTotal: 0,
-    subtotal: 0,
-  };
-  await cart.save();
   return { gatewayOrder: payment.gatewayOrder, order, paymentSession: payment.session ?? payment };
+}
+
+async function compensateRedemptions(
+  input: Pick<CheckoutInput, "userId">,
+  orderNumber: string,
+  completed: { couponRedemptionId?: unknown; giftCards: Array<{ code: string; amount: number }>; rewardPoints: number; storeCredit: number },
+) {
+  if (completed.couponRedemptionId) {
+    await reverseCouponRedemption(orderNumber);
+  }
+  if (completed.giftCards.length) {
+    await restoreGiftCardsForOrder({ orderNumber, redemptions: completed.giftCards });
+  }
+  if (input.userId && completed.storeCredit > 0) {
+    await restoreStoreCredit({ amount: completed.storeCredit, orderNumber, userId: input.userId });
+  }
+  if (input.userId && completed.rewardPoints > 0) {
+    await restoreRedeemedPoints({ orderNumber, points: completed.rewardPoints, userId: input.userId });
+  }
+}
+
+/**
+ * A customer who abandons the Razorpay modal keeps their cart; if they check out again, the
+ * previous unpaid attempt is cancelled so its stock, coupon and credits are released first.
+ */
+async function supersedePendingOrdersForCart(cartId: unknown) {
+  const pending = (await Order.find({ cartId, status: "pending_payment" }).limit(5)) as unknown[];
+
+  if (!Array.isArray(pending) || !pending.length) {
+    return;
+  }
+
+  const { cancelSupersededOrder } = await import("./orderLifecycleService.js");
+
+  for (const order of pending) {
+    await cancelSupersededOrder(order);
+  }
+}
+
+async function rememberCheckoutDetails(input: CheckoutInput) {
+  if (input.whatsappOptIn === true) {
+    await User.updateOne({ _id: input.userId }, { $set: { whatsappOptIn: true } });
+  }
+
+  if (input.shippingAddress.phone) {
+    // Only fill the profile phone if the customer has not set one yet.
+    await User.updateOne(
+      { _id: input.userId, $or: [{ phone: { $exists: false } }, { phone: "" }] },
+      { $set: { phone: input.shippingAddress.phone } },
+    );
+  }
+
+  if (input.saveAddress) {
+    const { saveCheckoutAddress } = await import("./addressService.js");
+    await saveCheckoutAddress(String(input.userId), input.shippingAddress);
+  }
 }
 
 async function calculateOrderTotals(
@@ -266,6 +407,8 @@ async function calculateOrderTotals(
     storeCreditRequested?: number;
     rewardValueRequested?: number;
     userId?: string;
+    guestEmail?: string;
+    mode: CalculationMode;
   },
 ) {
   const lines = cartLines(cart);
@@ -275,6 +418,7 @@ async function calculateOrderTotals(
   }
 
   const items = [];
+  const couponLines: Array<{ productId: unknown; categoryIds: unknown[]; lineSubtotal: number }> = [];
   const taxBreakdown = new Map<number, { taxableAmount: number; gstAmount: number }>();
 
   for (const line of lines) {
@@ -282,19 +426,14 @@ async function calculateOrderTotals(
       assertPreOrderWindow(line.preOrder);
     }
 
-    const product = await loadProductForCheckout(String(line.productId), String(line.variantId));
+    const product = await loadProductForCheckout(
+      String(line.productId),
+      String(line.variantId),
+      line.quantity,
+      Boolean(line.preOrder?.enabled),
+    );
     const variant = product.variants.find((item) => String(item._id) === String(line.variantId));
     const lineSubtotal = roundMoney(line.unitPrice * line.quantity);
-    const taxableAmount = roundMoney(lineSubtotal / (1 + product.gstRate / 100));
-    const gstAmount = roundMoney(lineSubtotal - taxableAmount);
-    const currentBreakdown = taxBreakdown.get(product.gstRate) ?? {
-      gstAmount: 0,
-      taxableAmount: 0,
-    };
-    taxBreakdown.set(product.gstRate, {
-      gstAmount: roundMoney(currentBreakdown.gstAmount + gstAmount),
-      taxableAmount: roundMoney(currentBreakdown.taxableAmount + taxableAmount),
-    });
     const preOrder = line.preOrder?.enabled
       ? {
           enabled: true,
@@ -304,10 +443,15 @@ async function calculateOrderTotals(
         }
       : undefined;
 
+    couponLines.push({
+      categoryIds: product.categoryIds ?? [],
+      lineSubtotal,
+      productId: line.productId,
+    });
     items.push({
       currencyCode: line.currencyCode,
       costPrice: variant?.costPrice ?? 0,
-      gstAmount,
+      gstAmount: 0,
       gstRate: product.gstRate,
       hsnCode: product.hsnCode,
       lineSubtotal,
@@ -318,7 +462,7 @@ async function calculateOrderTotals(
       quantity: line.quantity,
       sku: line.sku,
       slug: line.slug,
-      taxableAmount,
+      taxableAmount: 0,
       unitPrice: line.unitPrice,
       variantId: line.variantId,
     });
@@ -328,21 +472,66 @@ async function calculateOrderTotals(
   const giftPackagingFee = roundMoney(
     cart.giftPackaging?.enabled ? (cart.giftPackaging.fee ?? 0) : 0,
   );
-  const shippingFee = await calculateShippingFee(itemSubtotal, input.shippingMethod);
-  const couponDiscount = calculateCouponStubDiscount(input.couponCode);
-  const giftCardDiscount = roundMoney(
-    Math.min(
-      itemSubtotal + giftPackagingFee + shippingFee,
-      (cart.giftCardRedemptions as Array<{ amount: number }>).reduce(
-        (total, redemption) => total + redemption.amount,
-        0,
-      ),
-    ),
+  const baseShippingFee = await calculateShippingFee(itemSubtotal, input.shippingMethod);
+  let coupon: CouponEvaluation | undefined;
+  let couponError: string | undefined;
+
+  if (input.couponCode?.trim()) {
+    try {
+      coupon = await evaluateCoupon({
+        code: input.couponCode,
+        guestEmail: input.guestEmail,
+        lines: couponLines,
+        shippingFee: baseShippingFee,
+        userId: input.userId,
+      });
+    } catch (error) {
+      if (input.mode === "order" || !(error instanceof AppError)) {
+        throw error;
+      }
+      couponError = error.message;
+    }
+  }
+
+  if (coupon && !coupon.combinableWithStoreCredit && (input.storeCreditRequested ?? 0) > 0) {
+    throw new AppError(`Coupon ${coupon.code} cannot be combined with store credit`, 400);
+  }
+
+  if (coupon && !coupon.combinableWithRewards && (input.rewardValueRequested ?? 0) > 0) {
+    throw new AppError(`Coupon ${coupon.code} cannot be combined with reward points`, 400);
+  }
+
+  const couponItemDiscount = coupon?.itemDiscount ?? 0;
+  const shippingFee = roundMoney(Math.max(0, baseShippingFee - (coupon?.shippingDiscount ?? 0)));
+
+  // GST is price-inclusive. A coupon lowers the taxable consideration, so allocate the item
+  // discount across lines pro-rata and compute tax on the discounted value (CGST s.15(3)).
+  for (const item of items) {
+    const share = itemSubtotal > 0 ? item.lineSubtotal / itemSubtotal : 0;
+    const discountedLine = Math.max(0, item.lineSubtotal - couponItemDiscount * share);
+    const taxableAmount = roundMoney(discountedLine / (1 + item.gstRate / 100));
+    const gstAmount = roundMoney(discountedLine - taxableAmount);
+    item.taxableAmount = taxableAmount;
+    item.gstAmount = gstAmount;
+    const currentBreakdown = taxBreakdown.get(item.gstRate) ?? { gstAmount: 0, taxableAmount: 0 };
+    taxBreakdown.set(item.gstRate, {
+      gstAmount: roundMoney(currentBreakdown.gstAmount + gstAmount),
+      taxableAmount: roundMoney(currentBreakdown.taxableAmount + taxableAmount),
+    });
+  }
+
+  const giftCardRedemptions = await resolveGiftCardRedemptions(
+    cart.giftCardRedemptions as Array<{ code: string; amount: number }>,
+    Math.max(0, itemSubtotal - couponItemDiscount + giftPackagingFee + shippingFee),
+    coupon,
   );
-  const discountTotal = roundMoney(couponDiscount);
+  const giftCardDiscount = roundMoney(
+    giftCardRedemptions.reduce((total, redemption) => total + redemption.amount, 0),
+  );
+  const discountTotal = roundMoney(couponItemDiscount + (coupon?.shippingDiscount ?? 0));
   const preLoyaltyRemaining = Math.max(
     0,
-    itemSubtotal + giftPackagingFee + shippingFee - discountTotal - giftCardDiscount,
+    itemSubtotal + giftPackagingFee + shippingFee - couponItemDiscount - giftCardDiscount,
   );
   let storeCreditApplied = 0;
   let rewardValueApplied = 0;
@@ -374,15 +563,21 @@ async function calculateOrderTotals(
   const grandTotal = roundMoney(
     Math.max(0, preLoyaltyRemaining - storeCreditApplied - rewardValueApplied),
   );
+  const customer = input.userId
+    ? ((await User.findById(input.userId).select("customerType priceListCode").lean()) as {
+        customerType?: "retail" | "wholesale";
+        priceListCode?: string;
+      } | null)
+    : null;
 
   return {
     adjustments: [
-      ...(input.couponCode
+      ...(coupon
         ? [
             {
-              amount: couponDiscount,
-              code: input.couponCode,
-              label: "Coupon stub",
+              amount: discountTotal,
+              code: coupon.code,
+              label: `Coupon ${coupon.code}`,
               type: "coupon" as const,
             },
           ]
@@ -393,8 +588,14 @@ async function calculateOrderTotals(
       { amount: storeCreditApplied, label: "Store credit", type: "store_credit" as const },
       { amount: rewardValueApplied, label: "Reward points", type: "reward" as const },
     ],
+    coupon,
+    couponError,
+    customerType: customer?.customerType ?? "retail",
+    giftCardRedemptions,
     items,
     preOrderPaymentMode: resolvePreOrderPaymentMode(items),
+    priceListCode:
+      customer?.customerType === "wholesale" ? customer.priceListCode || "WHOLESALE" : undefined,
     rewardPointsRedeemed,
     taxBreakdown: [...taxBreakdown.entries()].map(([gstRate, value]) => ({ gstRate, ...value })),
     totals: {
@@ -413,12 +614,75 @@ async function calculateOrderTotals(
   };
 }
 
+/** Re-reads each applied gift card so a stale cart snapshot can never overspend a card. */
+async function resolveGiftCardRedemptions(
+  snapshots: Array<{ code: string; amount: number }> = [],
+  payable: number,
+  coupon?: CouponEvaluation,
+) {
+  if (!snapshots.length) {
+    return [];
+  }
+
+  if (coupon && !coupon.combinableWithGiftCards) {
+    throw new AppError(`Coupon ${coupon.code} cannot be combined with gift cards`, 400);
+  }
+
+  let remaining = payable;
+  const resolved: Array<{ code: string; amount: number }> = [];
+
+  for (const snapshot of snapshots) {
+    if (remaining <= 0) {
+      break;
+    }
+
+    const card = await getGiftCardByCode(snapshot.code);
+
+    if (!isGiftCardUsable(card)) {
+      throw new AppError(`Gift card ${snapshot.code} is no longer valid. Remove it to continue.`, 409);
+    }
+
+    // Never exceed the amount validated into the cart, the live balance, or what is payable.
+    const amount = roundMoney(Math.min(snapshot.amount, card!.balance, remaining));
+    resolved.push({ amount, code: card!.code });
+    remaining -= amount;
+  }
+
+  return resolved;
+}
+
+/** Storefront payment policy: v1 retail = Razorpay or secured COD; wholesale per its terms. */
+async function assertPaymentMethodAllowed(
+  input: CheckoutInput,
+  wholesale: WholesaleAccount | undefined,
+  grandTotal: number,
+) {
+  if (input.paymentMethod === "credit_terms") {
+    if (!wholesale || !["net_15", "net_30"].includes(wholesale.paymentTerms)) {
+      throw new AppError("Credit terms are only available to approved wholesale accounts", 403);
+    }
+
+    const outstanding = await outstandingCredit(String(input.userId));
+    if (outstanding + grandTotal > wholesale.creditLimit) {
+      throw new AppError(
+        `This order exceeds your available credit (limit ${wholesale.creditLimit}, outstanding ${outstanding}). Pay online or settle open invoices first.`,
+        409,
+      );
+    }
+  }
+
+  if (wholesale && input.paymentMethod === "cod") {
+    throw new AppError("Cash on delivery is not available for wholesale orders", 400);
+  }
+}
+
 async function createPaymentForOrder(
   input: CheckoutInput,
   orderReference: string,
   amount: number,
   payableNow: number,
   paymentMode: "full" | "advance" | "balance",
+  wholesale?: WholesaleAccount,
 ) {
   const base = {
     amount,
@@ -431,12 +695,15 @@ async function createPaymentForOrder(
     userId: input.userId,
   };
 
-  if (input.paymentMethod === "razorpay") {
+  if (input.paymentMethod === "razorpay" || input.paymentMethod === "cod") {
     return createRazorpayPayment(base);
   }
 
-  if (input.paymentMethod === "cod") {
-    return createRazorpayPayment(base);
+  if (input.paymentMethod === "credit_terms") {
+    return createCreditTermsPayment({
+      ...base,
+      dueAt: creditTermsDueDate(wholesale?.paymentTerms ?? "net_15"),
+    });
   }
 
   if (input.paymentMethod === "manual_bank_transfer") {
@@ -494,7 +761,12 @@ function checkoutActorId(input: Pick<CheckoutInput, "guestEmail" | "guestSession
   return input.userId ?? input.guestSessionId ?? input.guestEmail ?? "guest";
 }
 
-async function loadProductForCheckout(productId: string, variantId: string): Promise<ProductLean> {
+async function loadProductForCheckout(
+  productId: string,
+  variantId: string,
+  quantity: number,
+  purchaseAsPreOrder: boolean,
+): Promise<ProductLean> {
   const product = (await Product.findOne({
     _id: productId,
     active: true,
@@ -502,7 +774,7 @@ async function loadProductForCheckout(productId: string, variantId: string): Pro
   }).lean()) as ProductLean | null;
 
   if (!product) {
-    throw new AppError("Product not found", 404);
+    throw new AppError("A product in your cart is no longer available", 409);
   }
 
   const variant = product.variants.find(
@@ -510,19 +782,31 @@ async function loadProductForCheckout(productId: string, variantId: string): Pro
   );
 
   if (!variant) {
-    throw new AppError("Product variant is not available", 409);
+    throw new AppError("A selected size/colour is no longer available. Please update your cart.", 409);
   }
 
-  const inventoryAvailable = await getAvailableStockBySku(variant.sku);
-  const preOrderActive = isPreOrderActive(variant.preOrder);
-
-  if (preOrderActive) {
-    assertPreOrderWindow(variant.preOrder);
-    return product;
+  if (purchaseAsPreOrder || isPreOrderActive(variant.preOrder)) {
+    if (purchaseAsPreOrder) {
+      assertPreOrderWindow(variant.preOrder);
+      return product;
+    }
   }
 
-  if ((inventoryAvailable ?? variant.stockPlaceholder ?? 0) <= 0) {
-    throw new AppError("Product variant is not available", 409);
+  // The inventory ledger is the single source of truth. A SKU with no ledger row has no stock.
+  const inventoryAvailable = (await getAvailableStockBySku(variant.sku)) ?? 0;
+
+  if (inventoryAvailable < quantity) {
+    if (isPreOrderActive(variant.preOrder)) {
+      assertPreOrderWindow(variant.preOrder);
+      return product;
+    }
+
+    throw new AppError(
+      inventoryAvailable > 0
+        ? `Only ${inventoryAvailable} left for ${variant.sku}. Please reduce the quantity.`
+        : `${variant.sku} is out of stock. Please remove it from your cart.`,
+      409,
+    );
   }
 
   return product;
@@ -578,17 +862,13 @@ async function calculateShippingFee(itemSubtotal: number, method: "standard" | "
   return method === "express" ? expressFee : standardFee;
 }
 
-function calculateCouponStubDiscount(_couponCode?: string) {
-  return 0;
-}
-
 function buildOrderNumber() {
   const date = new Date();
   const stamp = `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(
     date.getUTCDate(),
   ).padStart(2, "0")}`;
 
-  return `TVH-${stamp}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  return `TVH-${stamp}-${crypto.randomBytes(4).toString("hex").slice(0, 6).toUpperCase()}`;
 }
 
 function roundMoney(value: number) {

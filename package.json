@@ -36,6 +36,7 @@
     "pino-http": "^10.5.0",
     "puppeteer": "^25.4.0",
     "razorpay": "^2.9.6",
+    "sanitize-html": "^2.17.7",
     "zod": "^3.25.64"
   },
   "devDependencies": {
@@ -44,6 +45,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
     "@types/node": "^22.10.0",
+    "@types/sanitize-html": "^2.16.1",
     "@typescript-eslint/eslint-plugin": "^8.35.0",
     "@typescript-eslint/parser": "^8.35.0",
     "eslint": "^9.29.0",

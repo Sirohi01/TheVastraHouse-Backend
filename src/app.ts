@@ -1,5 +1,6 @@
 import express from "express";
 import { API_VERSION } from "./config/api.js";
+import { env } from "./config/env.js";
 import { securityMiddleware } from "./config/security.js";
 import { requestId, errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { requestLogger } from "./middleware/requestLogger.js";
@@ -22,9 +23,19 @@ import { settingsRouter } from "./routes/settings.js";
 import { documentsRouter } from "./routes/documents.js";
 import { accessControlRouter } from "./routes/accessControl.js";
 import { manufacturingRouter } from "./routes/manufacturing.js";
+import { accountRouter } from "./routes/account.js";
+import { contentRouter } from "./routes/content.js";
+import { crmRouter } from "./routes/crm.js";
+import { engagementRouter } from "./routes/engagement.js";
+import { marketingRouter } from "./routes/marketing.js";
+import { systemRouter } from "./routes/system.js";
 
 export function createApp() {
   const app = express();
+
+  // Render/Vercel terminate TLS at a proxy; trust exactly that many hops for the client IP.
+  app.set("trust proxy", env.TRUST_PROXY_HOPS);
+  app.disable("x-powered-by");
 
   app.use(requestId);
   app.use(requestLogger);
@@ -52,6 +63,12 @@ export function createApp() {
   app.use(`/api/${API_VERSION}/documents`, documentsRouter);
   app.use(`/api/${API_VERSION}/access-control`, accessControlRouter);
   app.use(`/api/${API_VERSION}/manufacturing`, manufacturingRouter);
+  app.use(`/api/${API_VERSION}/account`, accountRouter);
+  app.use(`/api/${API_VERSION}/content`, contentRouter);
+  app.use(`/api/${API_VERSION}/crm`, crmRouter);
+  app.use(`/api/${API_VERSION}/engagement`, engagementRouter);
+  app.use(`/api/${API_VERSION}/marketing`, marketingRouter);
+  app.use(`/api/${API_VERSION}/system`, systemRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

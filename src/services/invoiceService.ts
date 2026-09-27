@@ -33,8 +33,24 @@ type OrderSnapshot = {
   taxBreakdown: unknown[];
   totals: Record<string, unknown> & { grandTotal: number; currencyCode: string };
 };
+type AddressSnapshot = {
+  fullName?: string;
+  company?: string;
+  line1?: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  countryCode?: string;
+  phone?: string;
+};
 type PdfSnapshot = {
-  company: { name: string; address: string; gstin: string; email: string };
+  billingAddress?: unknown;
+  shippingAddress?: unknown;
+  customerEmail?: string;
+  taxBreakdown?: unknown[];
+  metadata?: Record<string, unknown>;
+  company: { name: string; address: string; gstin: string; email: string; state?: string };
   currencyCode: string;
   documentNumber: string;
   issuedAt: Date;
@@ -95,16 +111,18 @@ export async function generateOrderDocument(input: {
     taxableAmount: money(item.taxableAmount * amountFactor),
     unitPrice: money(item.unitPrice * amountFactor),
   }));
+  const company = await companySnapshot();
+  const buyer = await buyerSnapshot(order);
   const snapshot = {
     billingAddress: order.billingAddress,
-    company: await companySnapshot(),
+    company,
     currencyCode: order.totals.currencyCode,
-    customerEmail: order.guestEmail,
+    customerEmail: order.guestEmail ?? (await accountEmail(order.userId)),
     documentNumber,
     financialYear,
     issuedAt,
     lines,
-    metadata: input.metadata ?? {},
+    metadata: { ...(input.metadata ?? {}), ...buyer },
     orderId: order._id,
     orderNumber: order.orderNumber,
     returnRequestId: input.returnRequestId,
@@ -330,14 +348,88 @@ export async function renderDocumentPdf(snapshot: PdfSnapshot) {
   }
 }
 
-function renderHtml(value: PdfSnapshot) {
+/**
+ * GST invoice layout: supplier and buyer blocks (buyer GSTIN for B2B), place of supply,
+ * HSN-wise lines, CGST+SGST for intra-state supplies or IGST for inter-state, charges,
+ * discounts, credits applied and payment terms. Shared by every document type.
+ */
+export function renderHtml(value: PdfSnapshot) {
+  const money = (amount: unknown) => formatMoney(Number(amount ?? 0), value.currencyCode);
+  const buyer = (value.metadata ?? {}) as { buyerGstin?: string; buyerBusinessName?: string; paymentTerms?: string; dueAt?: string | Date };
+  const billing = (value.billingAddress ?? value.shippingAddress ?? {}) as AddressSnapshot;
+  const shipping = (value.shippingAddress ?? {}) as AddressSnapshot;
+  const placeOfSupply = billing.region || shipping.region || "";
+  const intraState =
+    Boolean(value.company.state) && placeOfSupply.trim().toLowerCase() === String(value.company.state).trim().toLowerCase();
   const lines = value.lines
     .map(
       (line) =>
-        `<tr><td>${escapeHtml(line.productName)}</td><td>${escapeHtml(line.sku)}</td><td>${escapeHtml(line.hsnCode ?? "-")}</td><td>${line.quantity}</td><td>${formatMoney(line.unitPrice, value.currencyCode)}</td><td>${line.gstRate}%</td><td>${formatMoney(line.lineTotal, value.currencyCode)}</td></tr>`,
+        `<tr><td>${escapeHtml(line.productName)}</td><td>${escapeHtml(line.sku)}</td><td>${escapeHtml(line.hsnCode ?? "-")}</td><td class="n">${line.quantity}</td><td class="n">${money(line.unitPrice)}</td><td class="n">${line.gstRate}%</td><td class="n">${money(line.lineTotal)}</td></tr>`,
     )
     .join("");
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font:12px Arial;color:#2c231d;padding:28px}header{border-bottom:3px solid #8b1e2d;margin-bottom:24px;padding-bottom:12px}h1{color:#8b1e2d;margin:0}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f6f3ee}.total{text-align:right;font-size:16px;margin-top:20px}</style></head><body><header><h1>${escapeHtml(value.company.name)}</h1><p>${escapeHtml(value.company.address)}<br>GSTIN: ${escapeHtml(value.company.gstin || "Not configured")}</p></header><h2>${title(value.type)}</h2><p><strong>Document:</strong> ${escapeHtml(value.documentNumber)}<br><strong>Order:</strong> ${escapeHtml(value.orderNumber)}<br><strong>Issued:</strong> ${new Date(value.issuedAt).toLocaleDateString("en-IN")}</p><table><thead><tr><th>Item</th><th>SKU</th><th>HSN</th><th>Qty</th><th>Rate</th><th>GST</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table><p class="total"><strong>Grand total: ${formatMoney(value.totals.grandTotal, value.currencyCode)}</strong></p></body></html>`;
+  const taxRows = ((value.taxBreakdown ?? []) as Array<{ gstRate: number; taxableAmount: number; gstAmount: number }>)
+    .map((row) =>
+      intraState
+        ? `<tr><td>${row.gstRate}%</td><td class="n">${money(row.taxableAmount)}</td><td class="n">${money(row.gstAmount / 2)}</td><td class="n">${money(row.gstAmount / 2)}</td><td class="n">-</td></tr>`
+        : `<tr><td>${row.gstRate}%</td><td class="n">${money(row.taxableAmount)}</td><td class="n">-</td><td class="n">-</td><td class="n">${money(row.gstAmount)}</td></tr>`,
+    )
+    .join("");
+  const totals = value.totals as Record<string, number>;
+  const summary = [
+    ["Items (incl. GST)", totals.itemSubtotal],
+    ["Discount", totals.discountTotal ? -totals.discountTotal : 0],
+    ["Shipping", totals.shippingFee],
+    ["Gift packaging", totals.giftPackagingFee],
+    ["Paid by gift card", totals.giftCardDiscount ? -totals.giftCardDiscount : 0],
+    ["Paid by store credit", totals.storeCreditApplied ? -totals.storeCreditApplied : 0],
+    ["Paid by reward points", totals.rewardValueApplied ? -totals.rewardValueApplied : 0],
+  ]
+    .filter(([, amount]) => Number(amount))
+    .map(([label, amount]) => `<tr><td>${label}</td><td class="n">${money(amount)}</td></tr>`)
+    .join("");
+  const address = (entry: AddressSnapshot) =>
+    [entry.fullName, entry.company, entry.line1, entry.line2, [entry.city, entry.region, entry.postalCode].filter(Boolean).join(", "), entry.phone]
+      .filter(Boolean)
+      .map((part) => escapeHtml(String(part)))
+      .join("<br>");
+
+  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font:12px Arial;color:#2c231d;padding:28px}header{border-bottom:3px solid #8b1e2d;margin-bottom:18px;padding-bottom:12px;display:flex;justify-content:space-between}h1{color:#8b1e2d;margin:0}h2{margin:0 0 8px}table{border-collapse:collapse;width:100%;margin-top:14px}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}th{background:#f6f3ee}.n{text-align:right}.grid{display:flex;gap:24px}.grid>div{flex:1}.total{font-size:15px;font-weight:bold}.muted{color:#6b625a}</style></head><body>
+<header><div><h1>${escapeHtml(value.company.name)}</h1><p>${escapeHtml(value.company.address)}<br>GSTIN: ${escapeHtml(value.company.gstin || "Not configured")}${value.company.email ? `<br>${escapeHtml(value.company.email)}` : ""}</p></div><div style="text-align:right"><h2>${title(value.type)}</h2><p><strong>No.</strong> ${escapeHtml(value.documentNumber)}<br><strong>Date:</strong> ${new Date(value.issuedAt).toLocaleDateString("en-IN")}<br><strong>Order:</strong> ${escapeHtml(value.orderNumber)}</p></div></header>
+<div class="grid"><div><strong>Bill to</strong><br>${buyer.buyerBusinessName ? `${escapeHtml(buyer.buyerBusinessName)}<br>` : ""}${address(billing)}${buyer.buyerGstin ? `<br>GSTIN: ${escapeHtml(buyer.buyerGstin)}` : ""}${value.customerEmail ? `<br>${escapeHtml(value.customerEmail)}` : ""}</div><div><strong>Ship to</strong><br>${address(shipping)}</div><div><strong>Place of supply</strong><br>${escapeHtml(placeOfSupply || "-")}<br><span class="muted">${intraState ? "Intra-state supply (CGST + SGST)" : "Inter-state supply (IGST)"}</span>${buyer.paymentTerms ? `<br><strong>Payment terms:</strong> ${escapeHtml(String(buyer.paymentTerms).replace("_", " ").toUpperCase())}` : ""}${buyer.dueAt ? `<br><strong>Due:</strong> ${new Date(buyer.dueAt).toLocaleDateString("en-IN")}` : ""}</div></div>
+<table><thead><tr><th>Item</th><th>SKU</th><th>HSN</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">GST</th><th class="n">Amount</th></tr></thead><tbody>${lines}</tbody></table>
+${taxRows ? `<table><thead><tr><th>GST rate</th><th class="n">Taxable value</th><th class="n">CGST</th><th class="n">SGST</th><th class="n">IGST</th></tr></thead><tbody>${taxRows}</tbody></table>` : ""}
+<table style="width:50%;margin-left:50%"><tbody>${summary}<tr><td class="total">Grand total</td><td class="n total">${money(value.totals.grandTotal)}</td></tr></tbody></table>
+<p class="muted">Prices are inclusive of GST. This is a computer-generated document.</p></body></html>`;
+}
+
+async function accountEmail(userId: unknown) {
+  if (!userId) return undefined;
+  const { User } = await import("../models/User.js");
+  const user = (await User.findById(userId).select("email").lean()) as unknown as { email?: string } | null;
+  return user?.email;
+}
+
+async function buyerSnapshot(order: OrderSnapshot) {
+  const record = order as unknown as { userId?: unknown; customerType?: string; paymentTerms?: string; paymentSessionId?: unknown };
+  if (record.customerType !== "wholesale" || !record.userId) {
+    return {};
+  }
+  const { User } = await import("../models/User.js");
+  const { PaymentSession } = await import("../models/PaymentSession.js");
+  const [user, session] = await Promise.all([
+    User.findById(record.userId).select("wholesaleProfile").lean() as unknown as Promise<{
+      wholesaleProfile?: { gstin?: string; businessName?: string };
+    } | null>,
+    record.paymentSessionId
+      ? (PaymentSession.findById(record.paymentSessionId).select("dueAt").lean() as unknown as Promise<{ dueAt?: Date } | null>)
+      : Promise.resolve(null),
+  ]);
+  return {
+    buyerBusinessName: user?.wholesaleProfile?.businessName,
+    buyerGstin: user?.wholesaleProfile?.gstin,
+    dueAt: session?.dueAt,
+    paymentTerms: record.paymentTerms,
+  };
 }
 
 async function companySnapshot() {
@@ -346,6 +438,7 @@ async function companySnapshot() {
     email: (await getRuntimeSetting("COMPANY_EMAIL")) || env.COMPANY_EMAIL || env.SMTP_FROM_EMAIL,
     gstin: (await getRuntimeSetting("COMPANY_GSTIN")) ?? env.COMPANY_GSTIN,
     name: (await getRuntimeSetting("COMPANY_NAME")) ?? env.COMPANY_NAME,
+    state: (await getRuntimeSetting("COMPANY_STATE")) ?? env.COMPANY_STATE,
   };
 }
 

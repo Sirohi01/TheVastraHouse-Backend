@@ -8,6 +8,10 @@ import { releaseOrderStock } from "./inventoryService.js";
 import { releasePreOrderSlots } from "./preOrderService.js";
 import { notifyOrderStatusChanged } from "./commerceNotificationService.js";
 import { generateDispatchDocument } from "./invoiceService.js";
+import { logger } from "../utils/logger.js";
+import { refundCancelledOrder, reverseOrderFinancials } from "./orderReversalService.js";
+import { reverseReferralForOrder } from "./referralService.js";
+import { reverseEarnedPoints } from "./rewardPointsService.js";
 
 export type OrderStatus = (typeof orderStatuses)[number];
 
@@ -38,6 +42,15 @@ type OrderDoc = HydratedDocument<{
     warehouseId?: Types.ObjectId;
     status?: "reserved" | "released" | "deducted";
   }>;
+  paymentMethod: string;
+  risk?: { status?: string };
+  financials?: {
+    storeCreditRedeemed?: number;
+    rewardPointsRedeemed?: number;
+    giftCardRedemptions?: Array<{ code: string; amount: number }>;
+    reversedAt?: Date;
+  };
+  totals?: { currencyCode?: string; grandTotal?: number };
 }>;
 
 export type OrderActor = {
@@ -186,10 +199,108 @@ export async function transitionOrderDocument(
     entity: { id: order._id, type: "order", displayId: order.orderNumber },
     metadata: { fromStatus, toStatus: input.toStatus },
   });
+  if (input.toStatus === "cancelled") {
+    await settleCancelledOrder(order, input.actor, input.note);
+  }
+
+  if (input.toStatus === "refunded" && order.userId) {
+    await reverseEarnedPoints({
+      orderNumber: order.orderNumber,
+      reason: "Order refunded",
+      userId: String(order.userId),
+    });
+    await reverseReferralForOrder(order.orderNumber, "Qualifying order refunded");
+  }
+
   await notifyOrderStatusChanged(order, input.toStatus, input.note);
   if (input.toStatus === "shipped") {
     await generateDispatchDocument(order._id);
   }
+  return order;
+}
+
+/**
+ * Money side of a cancellation. The status change has already been persisted, so a gateway
+ * failure here is recorded on the timeline for the finance team instead of undoing the cancel.
+ */
+async function settleCancelledOrder(order: OrderDoc, actor: OrderActor, note?: string) {
+  const reason = note ? `Order cancelled: ${note}` : "Order cancelled";
+
+  try {
+    await reverseOrderFinancials(order, reason);
+  } catch (error) {
+    logger.error({ error, orderNumber: order.orderNumber }, "Order financial reversal failed");
+  }
+
+  try {
+    const refund = await refundCancelledOrder(order, actor.actorId);
+
+    if (refund) {
+      await recordOrderTimeline({
+        actor: { actorType: "system" },
+        fromStatus: order.status,
+        metadata: { refundId: refund._id, refundStatus: refund.status },
+        note:
+          refund.method === "bank_transfer"
+            ? `Refund of ${refund.amount} queued for bank transfer`
+            : `Refund of ${refund.amount} initiated to original payment method`,
+        order,
+      });
+    }
+  } catch (error) {
+    logger.error({ error, orderNumber: order.orderNumber }, "Cancellation refund failed");
+    await recordOrderTimeline({
+      actor: { actorType: "system" },
+      fromStatus: order.status,
+      note: "Automatic refund failed. Finance must process the refund manually.",
+      order,
+    });
+  }
+}
+
+/** Cancels an unpaid attempt replaced by a newer checkout from the same cart. */
+export async function cancelSupersededOrder(order: unknown) {
+  const doc = order as OrderDoc;
+
+  if (doc.status !== "pending_payment") {
+    return doc;
+  }
+
+  return transitionOrderDocument(doc, {
+    actor: { actorType: "system" },
+    note: "Superseded by a newer checkout attempt",
+    toStatus: "cancelled",
+  });
+}
+
+/** Places or lifts a fraud-review hold. Held orders cannot move into fulfilment. */
+export async function setOrderRiskHold(input: {
+  orderId: string;
+  hold: boolean;
+  actor: OrderActor;
+  note?: string;
+}) {
+  const order = (await Order.findById(input.orderId)) as OrderDoc | null;
+
+  if (!order) {
+    throw new AppError("Order not found", 404);
+  }
+
+  order.set("risk.status", input.hold ? "held" : "released");
+  order.set("risk.reviewedAt", new Date());
+  order.set("risk.reviewNote", input.note);
+  if (input.actor.actorId && Types.ObjectId.isValid(input.actor.actorId)) {
+    order.set("risk.reviewedBy", input.actor.actorId);
+  }
+  await order.save();
+  await recordOrderTimeline({
+    actor: input.actor,
+    fromStatus: order.status,
+    note: input.hold
+      ? `Placed on risk hold${input.note ? `: ${input.note}` : ""}`
+      : `Risk hold released${input.note ? `: ${input.note}` : ""}`,
+    order,
+  });
   return order;
 }
 
@@ -357,6 +468,13 @@ function assertTransitionAllowed(
     !["cancelled", "refunded"].includes(order.status)
   ) {
     return;
+  }
+
+  if (
+    order.risk?.status === "held" &&
+    ["packed", "ready_to_dispatch", "shipped", "in_production"].includes(input.toStatus)
+  ) {
+    throw new AppError("Order is on a fraud-review hold. Release the hold before fulfilment.", 409);
   }
 
   const allowed = orderTransitionGraph[order.status]?.includes(input.toStatus);

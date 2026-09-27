@@ -261,35 +261,69 @@ export async function reserveOrderStock(input: {
   actor: InventoryActor;
   referenceId: string;
 }) {
-  const reservations = [];
+  const reservations: Array<{
+    quantity: number;
+    reservedAt: Date;
+    sku: string;
+    status: "reserved";
+    warehouseId: unknown;
+  }> = [];
 
-  for (const item of input.items) {
-    const ledger = await findPrimaryLedger(item.sku);
-    if (!ledger) {
-      reservations.push({
-        quantity: item.quantity,
-        reservedAt: new Date(),
+  try {
+    for (const item of input.items) {
+      // The ledger is authoritative: a SKU with no ledger rows has zero sellable stock.
+      const ledgers = (await StockLedger.find({
+        available: { $gt: 0 },
         sku: normalizeSku(item.sku),
-        status: "reserved",
-      });
-      continue;
-    }
+      })
+        .sort({ available: -1, updatedAt: 1 })
+        .lean()) as unknown as Array<{ warehouseId: unknown; available: number }>;
+      const totalAvailable = ledgers.reduce((total, ledger) => total + ledger.available, 0);
 
-    await reserveStock({
+      if (totalAvailable < item.quantity) {
+        throw new AppError(
+          totalAvailable > 0
+            ? `Only ${totalAvailable} left for ${normalizeSku(item.sku)}`
+            : `${normalizeSku(item.sku)} is out of stock`,
+          409,
+        );
+      }
+
+      let outstanding = item.quantity;
+
+      // Fill from the fullest warehouse first, splitting across warehouses when needed.
+      for (const ledger of ledgers) {
+        if (outstanding <= 0) {
+          break;
+        }
+
+        const quantity = Math.min(outstanding, ledger.available);
+        await reserveStock({
+          actor: input.actor,
+          quantity,
+          referenceId: input.referenceId,
+          referenceType: "order",
+          sku: item.sku,
+          warehouseId: String(ledger.warehouseId),
+        });
+        reservations.push({
+          quantity,
+          reservedAt: new Date(),
+          sku: normalizeSku(item.sku),
+          status: "reserved",
+          warehouseId: ledger.warehouseId,
+        });
+        outstanding -= quantity;
+      }
+    }
+  } catch (error) {
+    // Roll back partial reservations so a failed checkout never strands stock.
+    await releaseOrderStock({
       actor: input.actor,
-      quantity: item.quantity,
       referenceId: input.referenceId,
-      referenceType: "order",
-      sku: item.sku,
-      warehouseId: String(ledger.warehouseId),
+      reservations,
     });
-    reservations.push({
-      quantity: item.quantity,
-      reservedAt: new Date(),
-      sku: normalizeSku(item.sku),
-      status: "reserved",
-      warehouseId: ledger.warehouseId,
-    });
+    throw error;
   }
 
   return reservations;
@@ -511,12 +545,6 @@ async function evaluateLowStockAlert(ledger: {
   return result.modifiedCount > 0 ? "resolved" : "ignored";
 }
 
-async function findPrimaryLedger(sku: string) {
-  return StockLedger.findOne({ sku: normalizeSku(sku), available: { $gt: 0 } }).sort({
-    available: -1,
-    updatedAt: 1,
-  });
-}
 
 function snapshot(value: Partial<StockState>) {
   return pickStockState(value);

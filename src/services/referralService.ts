@@ -3,7 +3,7 @@ import { AppError } from "../middleware/errorHandler.js";
 import { Referral } from "../models/Referral.js";
 import { User } from "../models/User.js";
 import { env } from "../config/env.js";
-import { issueStoreCredit } from "./storeCreditService.js";
+import { issueStoreCredit, reverseStoreCredit } from "./storeCreditService.js";
 import { getRuntimeNumberSetting } from "./runtimeSettingsService.js";
 
 export async function getOrCreateReferralCode(userId: string): Promise<string> {
@@ -62,10 +62,12 @@ export async function qualifyReferral(order: { userId?: unknown; orderNumber: st
     return null;
   }
 
-  const referral = await Referral.findOne({
-    referredUserId: order.userId,
-    status: "pending",
-  });
+  // Claim the referral atomically so concurrent confirmations cannot pay the reward twice.
+  const referral = await Referral.findOneAndUpdate(
+    { referredUserId: order.userId, status: "pending" },
+    { $set: { status: "qualified", qualifyingOrderNumber: order.orderNumber } },
+    { new: true },
+  );
 
   if (!referral) {
     return null;
@@ -76,19 +78,42 @@ export async function qualifyReferral(order: { userId?: unknown; orderNumber: st
     env.REFERRAL_REWARD_AMOUNT,
   );
 
-  await issueStoreCredit({
-    amount: rewardAmount,
-    notes: `Referral reward for referring ${String(order.userId)}`,
-    sourceType: "admin",
-    userId: String(referral.referrerUserId),
-  });
+  if (rewardAmount > 0) {
+    await issueStoreCredit({
+      amount: rewardAmount,
+      notes: `Referral reward for referring ${String(order.userId)}`,
+      orderNumber: order.orderNumber,
+      sourceType: "referral",
+      userId: String(referral.referrerUserId),
+    });
+  }
 
   referral.status = "rewarded";
-  referral.qualifyingOrderNumber = order.orderNumber;
+  referral.rewardAmount = rewardAmount;
   referral.rewardIssuedAt = new Date();
   await referral.save();
 
   return referral;
+}
+
+/** Reverses a referral reward when the qualifying order is cancelled/refunded. Idempotent. */
+export async function reverseReferralForOrder(orderNumber: string, reason: string) {
+  const referral = await Referral.findOneAndUpdate(
+    { qualifyingOrderNumber: orderNumber, status: "rewarded" },
+    { $set: { reversalReason: reason, reversedAt: new Date(), status: "reversed" } },
+    { new: true },
+  );
+
+  if (!referral) {
+    return 0;
+  }
+
+  return reverseStoreCredit({
+    amount: referral.rewardAmount ?? 0,
+    notes: `Referral reward reversed: ${reason}`,
+    orderNumber,
+    userId: String(referral.referrerUserId),
+  });
 }
 
 function generateReferralCode() {

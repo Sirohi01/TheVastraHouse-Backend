@@ -1,6 +1,6 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
-export const referralStatuses = ["pending", "qualified", "rewarded"] as const;
+export const referralStatuses = ["pending", "qualified", "rewarded", "reversed"] as const;
 
 const referralSchema = new Schema(
   {
@@ -10,6 +10,9 @@ const referralSchema = new Schema(
     status: { type: String, enum: referralStatuses, required: true, default: "pending" },
     qualifyingOrderNumber: { type: String, trim: true },
     rewardIssuedAt: { type: Date },
+    rewardAmount: { type: Number, min: 0 },
+    reversedAt: { type: Date },
+    reversalReason: { type: String, trim: true },
   },
   { timestamps: true },
 );

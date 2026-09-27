@@ -46,6 +46,10 @@ const heroSlideSchema = z
     showOutline: z.boolean().default(true),
     textColor: z.string().max(40).default("#ffffff"),
     title: z.string().max(160).optional(),
+    // Banner scheduling (FR-CMS-02): hidden outside [startsAt, endsAt] or when disabled.
+    enabled: z.boolean().default(true),
+    startsAt: z.coerce.date().nullable().optional(),
+    endsAt: z.coerce.date().nullable().optional(),
   })
   .strict();
 
@@ -168,16 +172,51 @@ const cmsSchema = z
 
 cmsRouter.get("/content/:key", async (req, res, next) => {
   try {
-    const content = await CmsContent.findOne({
+    const content = (await CmsContent.findOne({
       key: String(req.params.key).toLowerCase(),
       status: "published",
-    }).lean();
+    }).lean()) as unknown as Record<string, unknown> | null;
 
-    res.json({ content });
+    res.setHeader("Cache-Control", "public, max-age=30");
+    res.json({ content: content ? applyContentSchedule(content) : null });
   } catch (error) {
     next(error);
   }
 });
+
+type ScheduledSlide = { enabled?: boolean; startsAt?: Date | null; endsAt?: Date | null };
+
+function isSlideLive(slide: ScheduledSlide, now: Date) {
+  if (slide.enabled === false) return false;
+  if (slide.startsAt && new Date(slide.startsAt) > now) return false;
+  if (slide.endsAt && new Date(slide.endsAt) < now) return false;
+  return true;
+}
+
+/** Storefront only receives banners that are enabled and inside their scheduled window. */
+function applyContentSchedule(content: Record<string, unknown>) {
+  const now = new Date();
+  const home = content.home as { hero?: { slides?: ScheduledSlide[] }; story?: ScheduledSlide } | undefined;
+  const filterSlides = (slides?: ScheduledSlide[]) => slides?.filter((slide) => isSlideLive(slide, now));
+
+  return {
+    ...content,
+    home: home
+      ? {
+          ...home,
+          hero: home.hero ? { ...home.hero, slides: filterSlides(home.hero.slides) } : home.hero,
+          story: home.story && isSlideLive(home.story, now) ? home.story : undefined,
+        }
+      : home,
+    preOrder: withLivePromo(content.preOrder as Record<string, unknown> | undefined, now),
+    shop: withLivePromo(content.shop as Record<string, unknown> | undefined, now),
+  };
+}
+
+function withLivePromo(section: Record<string, unknown> | undefined, now: Date) {
+  if (!section?.promo) return section;
+  return isSlideLive(section.promo as ScheduledSlide, now) ? section : { ...section, promo: undefined };
+}
 
 cmsRouter.get(
   "/admin/content/:key",

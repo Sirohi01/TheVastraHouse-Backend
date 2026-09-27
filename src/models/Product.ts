@@ -1,17 +1,8 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
 import { validateGstRate, validateHsnCode } from "../services/taxValidationService.js";
 import { mediaReferenceSchema } from "./shared/mediaReference.js";
+import { seoFieldsSchema } from "./shared/seo.js";
 import { applySoftDeleteFields } from "./shared/softDelete.js";
-
-const seoSchema = new Schema(
-  {
-    title: { type: String, trim: true },
-    description: { type: String, trim: true },
-    canonicalUrl: { type: String, trim: true },
-    ogImage: mediaReferenceSchema,
-  },
-  { _id: false },
-);
 
 const priceTierSchema = new Schema(
   {
@@ -134,7 +125,10 @@ const productSchema = new Schema(
         message: "At least one variant is required",
       },
     },
-    seo: seoSchema,
+    seo: seoFieldsSchema,
+    ratingAverage: { type: Number, min: 0, max: 5, default: 0 },
+    ratingCount: { type: Number, min: 0, default: 0 },
+    wholesaleMinQuantity: { type: Number, min: 1 },
     badgeOverrides: badgeOverridesSchema,
     computedBadges: { type: badgeStateSchema, default: () => ({}) },
     merchandisingMetrics: { type: merchandisingMetricsSchema, default: () => ({}) },
@@ -161,6 +155,11 @@ productSchema.index({ "variants.basePrice": 1, active: 1, status: 1 });
 productSchema.index({ "variants.preOrder.enabled": 1, "variants.preOrder.endAt": 1 });
 productSchema.index({ fabricDetails: 1, active: 1, status: 1 });
 productSchema.index({ "merchandisingMetrics.unitsSold30d": -1, active: 1, status: 1 });
+// A SKU identifies exactly one variant across the whole catalog (inventory, orders, invoices).
+productSchema.index(
+  { "variants.sku": 1 },
+  { unique: true, partialFilterExpression: { "variants.sku": { $exists: true } } },
+);
 
 export type ProductDocument = InferSchemaType<typeof productSchema>;
 

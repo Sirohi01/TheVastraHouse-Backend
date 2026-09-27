@@ -99,3 +99,50 @@ export async function revokeRefreshToken(token: string): Promise<void> {
     await revokeRefreshTokenFamily(existingToken.familyId, "logout");
   }
 }
+
+/** Signs the user out everywhere (password reset/change, account deactivation). */
+export async function revokeAllUserSessions(userId: Types.ObjectId | string): Promise<void> {
+  await RefreshToken.updateMany(
+    { userId, revokedAt: { $exists: false } },
+    { $set: { revokedAt: new Date() } },
+  );
+}
+
+export async function listActiveSessions(userId: string) {
+  const tokens = (await RefreshToken.find({
+    expiresAt: { $gt: new Date() },
+    revokedAt: { $exists: false },
+    userId,
+  })
+    .sort({ createdAt: -1 })
+    .lean()) as unknown as Array<{
+    familyId: string;
+    userAgent?: string;
+    ipAddress?: string;
+    createdAt: Date;
+    expiresAt: Date;
+  }>;
+
+  return tokens.map((token) => ({
+    expiresAt: token.expiresAt,
+    ipAddress: token.ipAddress,
+    lastUsedAt: token.createdAt,
+    sessionId: token.familyId,
+    userAgent: token.userAgent,
+  }));
+}
+
+export async function revokeSessionFamily(userId: string, familyId: string): Promise<boolean> {
+  const result = await RefreshToken.updateMany(
+    { familyId, revokedAt: { $exists: false }, userId },
+    { $set: { revokedAt: new Date() } },
+  );
+  return result.modifiedCount > 0;
+}
+
+export async function familyIdForToken(token: string): Promise<string | undefined> {
+  const existing = (await RefreshToken.findOne({ tokenHash: hashOpaqueToken(token) }).lean()) as {
+    familyId?: string;
+  } | null;
+  return existing?.familyId;
+}

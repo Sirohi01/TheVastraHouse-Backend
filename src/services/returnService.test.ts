@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { queryResult, stubStatics } from "../testing/commerceStubs.js";
+import { RewardPointsLedger } from "../models/RewardPointsLedger.js";
+import { Referral } from "../models/Referral.js";
 import test from "node:test";
 import { Types } from "mongoose";
 import { AuditLog } from "../models/AuditLog.js";
@@ -138,6 +141,12 @@ test("second refund attempt and excessive refund amount are rejected", async (t)
 });
 
 function patchReturnModels() {
+  const restoreLedger = stubStatics(RewardPointsLedger, {
+    findOne: () => queryResult(null),
+  });
+  const restoreReferral = stubStatics(Referral, {
+    findOneAndUpdate: () => Promise.resolve(null),
+  });
   const originalOrderFindOne = Order.findOne;
   const originalOrderFindById = Order.findById;
   const originalReturnCreate = ReturnRequest.create;
@@ -254,6 +263,8 @@ function patchReturnModels() {
       (LowStockAlert as unknown as { updateMany: unknown }).updateMany = originalLowStockUpdateMany;
       (OrderTimeline as unknown as { create: unknown }).create = originalTimelineCreate;
       (AuditLog as unknown as { create: unknown }).create = originalAuditCreate;
+      restoreLedger();
+      restoreReferral();
     },
   });
 }

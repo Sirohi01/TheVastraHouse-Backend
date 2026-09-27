@@ -1,7 +1,13 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
 import { mediaReferenceSchema } from "./shared/mediaReference.js";
 
-export const paymentMethods = ["razorpay", "cod", "manual_bank_transfer", "upi"] as const;
+export const paymentMethods = [
+  "razorpay",
+  "cod",
+  "manual_bank_transfer",
+  "upi",
+  "credit_terms",
+] as const;
 export const paymentStatuses = [
   "pending_payment",
   "payment_verification_pending",
@@ -39,6 +45,20 @@ const paymentSessionSchema = new Schema(
       default: "full",
     },
     razorpayOrderId: { type: String, trim: true, index: true },
+    razorpayOrderIds: [{ type: String, trim: true }],
+    capturedPaymentIds: [{ type: String, trim: true }],
+    captures: [
+      {
+        _id: false,
+        key: { type: String, required: true, trim: true },
+        razorpayPaymentId: { type: String, trim: true },
+        amount: { type: Number, required: true, min: 0 },
+        refundedAmount: { type: Number, min: 0, default: 0 },
+        capturedAt: { type: Date, default: Date.now },
+      },
+    ],
+    refundedAmount: { type: Number, min: 0, default: 0 },
+    dueAt: { type: Date },
     razorpayPaymentId: { type: String, trim: true },
     razorpaySignature: { type: String, trim: true },
     manualScreenshot: mediaReferenceSchema,
@@ -56,6 +76,11 @@ const paymentSessionSchema = new Schema(
 
 paymentSessionSchema.index({ method: 1, status: 1, createdAt: -1 });
 paymentSessionSchema.index({ razorpayOrderId: 1, razorpayPaymentId: 1 });
+paymentSessionSchema.index({ razorpayOrderIds: 1 });
+paymentSessionSchema.index(
+  { capturedPaymentIds: 1 },
+  { unique: true, partialFilterExpression: { "capturedPaymentIds.0": { $exists: true } } },
+);
 
 export type PaymentSessionDocument = InferSchemaType<typeof paymentSessionSchema>;
 

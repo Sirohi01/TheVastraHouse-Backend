@@ -11,9 +11,14 @@ import { Refund } from "../models/Refund.js";
 import { ReturnRequest } from "../models/ReturnRequest.js";
 import { writeAuditLog } from "./auditLogService.js";
 import { finalizeOrderAfterPayment } from "./orderFulfillmentService.js";
+import { fulfillGiftCardPurchase } from "./giftCardService.js";
 import { transitionOrderDocument } from "./orderLifecycleService.js";
 import { getPaymentSettings } from "./paymentSettingsService.js";
-import { getRuntimeNumberSetting } from "./runtimeSettingsService.js";
+import {
+  getRuntimeBooleanSetting,
+  getRuntimeNumberSetting,
+  getRuntimeSetting,
+} from "./runtimeSettingsService.js";
 
 export type CreatePaymentInput = {
   userId?: string;
@@ -61,7 +66,7 @@ type PaymentSessionDoc = HydratedDocument<{
   guestEmail?: string;
   guestSessionId?: string;
   orderReference: string;
-  method: "razorpay" | "cod" | "manual_bank_transfer" | "upi";
+  method: "razorpay" | "cod" | "manual_bank_transfer" | "upi" | "credit_terms";
   status:
     | "pending_payment"
     | "payment_verification_pending"
@@ -75,9 +80,12 @@ type PaymentSessionDoc = HydratedDocument<{
   payableNow: number;
   paidAmount: number;
   outstandingAmount: number;
+  refundedAmount?: number;
   currencyCode: string;
   paymentMode: "full" | "advance" | "balance";
   razorpayOrderId?: string;
+  razorpayOrderIds?: string[];
+  capturedPaymentIds?: string[];
   razorpayPaymentId?: string;
   razorpaySignature?: string;
   upiId?: string;
@@ -111,6 +119,7 @@ export async function createRazorpayPayment(input: CreatePaymentInput) {
   });
 
   session.razorpayOrderId = gatewayOrder.id;
+  rememberGatewayOrder(session, gatewayOrder.id);
   await session.save();
   await recordPaymentHistory(session, "razorpay_order_created", "system", {
     gatewayOrder,
@@ -128,12 +137,13 @@ export async function refundRazorpayPayment(input: {
     throw new AppError("Razorpay refund details are invalid", 400);
   }
 
-  if (
-    isTestRuntime() ||
-    !env.RAZORPAY_ENABLE_GATEWAY_CALLS ||
-    !env.RAZORPAY_KEY_ID ||
-    !env.RAZORPAY_KEY_SECRET
-  ) {
+  const razorpay = await getRazorpayClient();
+
+  if (!razorpay) {
+    if (env.NODE_ENV === "production" && !isTestRuntime()) {
+      throw new AppError("Razorpay gateway is not configured; refund cannot be issued", 503);
+    }
+
     return {
       amount: Math.round(input.amount * 100),
       id: `rfnd_dev_${crypto.randomUUID()}`,
@@ -142,10 +152,6 @@ export async function refundRazorpayPayment(input: {
     };
   }
 
-  const razorpay = new Razorpay({
-    key_id: env.RAZORPAY_KEY_ID,
-    key_secret: env.RAZORPAY_KEY_SECRET,
-  });
   return (await razorpay.payments.refund(input.paymentId, {
     amount: Math.round(input.amount * 100),
     notes: { returnNumber: input.returnNumber },
@@ -186,6 +192,10 @@ export async function createBalancePaymentForOrder(input: {
     }
   }
 
+  if (["cancelled", "refunded", "returned"].includes(order.status)) {
+    throw new AppError("This order is closed and cannot accept payments", 409);
+  }
+
   if (!order.paymentSessionId) {
     throw new AppError("Order has no associated payment session", 409);
   }
@@ -196,19 +206,21 @@ export async function createBalancePaymentForOrder(input: {
     throw new AppError("Payment session not found", 404);
   }
 
-  if (session.paidAmount === 0 && order.status !== "pending_payment") {
+  const isCreditTerms = session.method === "credit_terms";
+
+  if (session.paidAmount === 0 && order.status !== "pending_payment" && !isCreditTerms) {
     throw new AppError("The initial payment window for this order is closed", 409);
   }
 
-  if (session.method !== "razorpay") {
-    throw new AppError("Balance payment is only supported for Razorpay orders", 409);
+  if (session.method !== "razorpay" && !isCreditTerms) {
+    throw new AppError("Online payment is only supported for Razorpay and wholesale credit orders", 409);
   }
 
   if (session.outstandingAmount <= 0) {
     throw new AppError("This order has no outstanding balance", 409);
   }
 
-  const isInitialRetry = session.paidAmount === 0;
+  const isInitialRetry = session.paidAmount === 0 && !isCreditTerms;
   const amountToCollect = isInitialRetry ? session.payableNow : session.outstandingAmount;
   const gatewayOrder = await createRazorpayGatewayOrder({
     amount: amountToCollect,
@@ -221,6 +233,7 @@ export async function createBalancePaymentForOrder(input: {
     session.paymentMode = "balance";
   }
   session.razorpayOrderId = gatewayOrder.id;
+  rememberGatewayOrder(session, gatewayOrder.id);
   await session.save();
   await recordPaymentHistory(
     session,
@@ -240,18 +253,23 @@ export async function verifyRazorpayPayment(input: {
   razorpaySignature: string;
   actorId?: string;
 }) {
-  const session = await PaymentSession.findOne({ razorpayOrderId: input.razorpayOrderId });
+  const session = await findSessionByGatewayOrder(input.razorpayOrderId);
 
   if (!session) {
     throw new AppError("Payment session not found", 404);
   }
 
-  assertRazorpayPaymentSignature(input);
-  applySuccessfulCapture(session, session.payableNow, {
+  await assertRazorpayPaymentSignature(input);
+  const applied = await captureOnce(session, session.payableNow, {
     razorpayPaymentId: input.razorpayPaymentId,
     razorpaySignature: input.razorpaySignature,
   });
-  await session.save();
+
+  if (!applied) {
+    // Replayed confirmation, or the webhook already credited this payment: never double count.
+    return session;
+  }
+
   await recordPaymentHistory(
     session,
     "razorpay_payment_verified",
@@ -267,6 +285,7 @@ export async function verifyRazorpayPayment(input: {
     paymentSessionId: session._id,
     paymentSessionStatus: session.status,
   });
+  await fulfillGiftCardPurchase(session);
 
   return session;
 }
@@ -274,7 +293,7 @@ export async function verifyRazorpayPayment(input: {
 export async function handleRazorpayWebhook(rawBody: Buffer, signature: string | undefined) {
   const payloadText = rawBody.toString("utf8");
 
-  if (!signature || !verifyRazorpayWebhookSignature(payloadText, signature)) {
+  if (!signature || !(await verifyRazorpayWebhookSignature(payloadText, signature))) {
     await PaymentWebhookEvent.create({
       eventId: `invalid-${crypto.randomUUID()}`,
       eventType: "invalid_signature",
@@ -314,24 +333,41 @@ export async function handleRazorpayWebhook(rawBody: Buffer, signature: string |
   const payment = payload.payload?.payment?.entity;
 
   if (payload.event === "payment.captured" && payment?.order_id && payment.id) {
-    const session = await PaymentSession.findOne({ razorpayOrderId: payment.order_id });
+    const session = await findSessionByGatewayOrder(payment.order_id);
 
     if (session) {
-      applySuccessfulCapture(session, (payment.amount ?? session.payableNow * 100) / 100, {
-        razorpayPaymentId: payment.id,
-      });
-      await session.save();
       event.paymentSessionId = session._id;
-      await recordPaymentHistory(session, "razorpay_webhook_captured", "system", {
+      const applied = await captureOnce(
+        session,
+        (payment.amount ?? session.payableNow * 100) / 100,
+        { razorpayPaymentId: payment.id },
+      );
+
+      if (applied) {
+        await recordPaymentHistory(session, "razorpay_webhook_captured", "system", {
+          gatewayTransactionId: payment.id,
+          webhookEventId: eventId,
+        });
+        await finalizeOrderAfterPayment({
+          actor: { actorType: "system" },
+          outstandingAmount: session.outstandingAmount,
+          payableNow: session.payableNow,
+          paymentSessionId: session._id,
+          paymentSessionStatus: session.status,
+        });
+        await fulfillGiftCardPurchase(session);
+      }
+    }
+  }
+
+  if (payload.event === "payment.failed" && payment?.order_id) {
+    const session = await findSessionByGatewayOrder(payment.order_id);
+
+    if (session) {
+      event.paymentSessionId = session._id;
+      await recordPaymentHistory(session, "razorpay_payment_failed", "system", {
         gatewayTransactionId: payment.id,
         webhookEventId: eventId,
-      });
-      await finalizeOrderAfterPayment({
-        actor: { actorType: "system" },
-        outstandingAmount: session.outstandingAmount,
-        payableNow: session.payableNow,
-        paymentSessionId: session._id,
-        paymentSessionStatus: session.status,
       });
     }
   }
@@ -341,14 +377,32 @@ export async function handleRazorpayWebhook(rawBody: Buffer, signature: string |
     (payload.event === "refund.processed" || payload.event === "refund.failed") &&
     gatewayRefund?.id
   ) {
-    const refund = await Refund.findOne({ gatewayRefundId: gatewayRefund.id });
-    if (refund) {
-      refund.status = payload.event === "refund.processed" ? "processed" : "rejected";
-      refund.processedAt = payload.event === "refund.processed" ? new Date() : undefined;
-      refund.metadata = { ...(refund.metadata ?? {}), gatewayStatus: gatewayRefund.status };
+    const refund = await Refund.findOne({
+      $or: [{ gatewayRefundId: gatewayRefund.id }, { gatewayRefundIds: gatewayRefund.id }],
+    });
+    if (refund && refund.status !== "processed") {
+      const metadata = (refund.metadata ?? {}) as { processedGatewayRefundIds?: string[] };
+      const processedIds = new Set(metadata.processedGatewayRefundIds ?? []);
+      if (payload.event === "refund.processed") {
+        processedIds.add(gatewayRefund.id);
+      }
+      const allIds = refund.gatewayRefundIds?.length
+        ? (refund.gatewayRefundIds as string[])
+        : [gatewayRefund.id];
+      const allProcessed = allIds.every((id) => processedIds.has(id));
+      refund.status =
+        payload.event === "refund.failed" ? "rejected" : allProcessed ? "processed" : "pending";
+      refund.processedAt = refund.status === "processed" ? new Date() : undefined;
+      refund.metadata = {
+        ...metadata,
+        gatewayStatus: gatewayRefund.status,
+        processedGatewayRefundIds: [...processedIds],
+      };
       await refund.save();
-      const returnRequest = await ReturnRequest.findById(refund.returnRequestId);
-      if (returnRequest && payload.event === "refund.processed") {
+      const returnRequest = refund.returnRequestId
+        ? await ReturnRequest.findById(refund.returnRequestId)
+        : null;
+      if (returnRequest && refund.status === "processed") {
         returnRequest.status = "refunded";
         await returnRequest.save();
         const order = await Order.findById(refund.orderId);
@@ -367,12 +421,62 @@ export async function handleRazorpayWebhook(rawBody: Buffer, signature: string |
 
 async function transitionRefundedOrder(order: Awaited<ReturnType<typeof Order.findById>>) {
   if (!order) return;
-  const { transitionOrderDocument } = await import("./orderLifecycleService.js");
   await transitionOrderDocument(order as unknown as Parameters<typeof transitionOrderDocument>[0], {
     actor: { actorType: "system" },
     note: "Razorpay refund processed",
     toStatus: "refunded",
   });
+}
+
+/** Wholesale net-terms order: goods ship on credit; the balance is due by `dueAt`. */
+export async function createCreditTermsPayment(input: CreatePaymentInput & { dueAt: Date }) {
+  const amounts = normalizeAmounts(input.amount, input.amount);
+  const session = await PaymentSession.create({
+    amount: amounts.amount,
+    currencyCode: input.currencyCode ?? "INR",
+    dueAt: input.dueAt,
+    guestEmail: input.guestEmail,
+    method: "credit_terms",
+    orderReference: input.orderReference,
+    outstandingAmount: amounts.amount,
+    paidAmount: 0,
+    payableNow: amounts.amount,
+    paymentMode: "balance",
+    status: "pending_payment",
+    userId: input.userId,
+  });
+
+  await recordPaymentHistory(session, "credit_terms_issued", "system", { dueAt: input.dueAt });
+  return session;
+}
+
+/** Finance records money received offline (bank transfer/cheque) against a credit-terms order. */
+export async function recordOfflinePayment(input: {
+  paymentSessionId: string;
+  amount: number;
+  reference: string;
+  adminUserId: string;
+}) {
+  const session = await PaymentSession.findById(input.paymentSessionId);
+
+  if (!session) throw new AppError("Payment session not found", 404);
+  if (session.method !== "credit_terms") {
+    throw new AppError("Offline payments can only be recorded against wholesale credit orders", 409);
+  }
+  if (input.amount <= 0 || input.amount > session.outstandingAmount) {
+    throw new AppError(`Amount must be between 1 and the outstanding ${session.outstandingAmount}`, 400);
+  }
+
+  const applied = await captureOnce(session, input.amount, {
+    captureKey: `offline:${input.reference.trim().toUpperCase()}`,
+  });
+  if (!applied) throw new AppError("This payment reference has already been recorded", 409);
+
+  await recordPaymentHistory(session, "offline_payment_recorded", "admin", {
+    actorId: input.adminUserId,
+    reference: input.reference,
+  });
+  return session;
 }
 
 export async function createCodPayment(input: CreatePaymentInput) {
@@ -469,10 +573,16 @@ export async function approveManualPayment(input: {
   }
 
   const before = session.toObject();
-  applySuccessfulCapture(session, session.payableNow, {});
   session.verifiedBy = new Types.ObjectId(input.adminUserId);
   session.verifiedAt = new Date();
-  await session.save();
+  const applied = await captureOnce(session, session.payableNow, {
+    captureKey: `manual:${String(session._id)}`,
+  });
+
+  if (!applied) {
+    throw new AppError("Payment has already been approved", 409);
+  }
+
   await recordPaymentHistory(session, "payment_approved", "admin", { actorId: input.adminUserId });
   await writeAuditLog({
     actor: {
@@ -563,27 +673,36 @@ export async function listPaymentHistory(userId: string, orderReference?: string
     .lean();
 }
 
-export function assertRazorpayPaymentSignature(input: {
+export async function assertRazorpayPaymentSignature(input: {
   razorpayOrderId: string;
   razorpayPaymentId: string;
   razorpaySignature: string;
 }) {
-  const secret = getRazorpaySecret("RAZORPAY_KEY_SECRET");
+  const secret = await getRazorpaySecret("RAZORPAY_KEY_SECRET");
   const expected = crypto
     .createHmac("sha256", secret)
     .update(`${input.razorpayOrderId}|${input.razorpayPaymentId}`)
     .digest("hex");
 
   if (!safeEqual(expected, input.razorpaySignature)) {
-    throw new AppError("Razorpay payment signature is invalid", 401);
+    throw new AppError("Razorpay payment signature is invalid", 400);
   }
 }
 
-export function verifyRazorpayWebhookSignature(payloadText: string, signature: string) {
-  const secret = getRazorpaySecret("RAZORPAY_WEBHOOK_SECRET");
+export async function verifyRazorpayWebhookSignature(payloadText: string, signature: string) {
+  const secret = await getRazorpaySecret("RAZORPAY_WEBHOOK_SECRET");
   const expected = crypto.createHmac("sha256", secret).update(payloadText).digest("hex");
 
   return safeEqual(expected, signature);
+}
+
+export async function getRazorpayPublicConfig() {
+  const credentials = await getRazorpayCredentials();
+
+  return {
+    gatewayEnabled: credentials.enabled && Boolean(credentials.keyId && credentials.keySecret),
+    keyId: credentials.keyId,
+  };
 }
 
 async function createRazorpayGatewayOrder(input: {
@@ -591,12 +710,13 @@ async function createRazorpayGatewayOrder(input: {
   currencyCode: string;
   receipt: string;
 }): Promise<RazorpayOrder> {
-  if (
-    isTestRuntime() ||
-    !env.RAZORPAY_ENABLE_GATEWAY_CALLS ||
-    !env.RAZORPAY_KEY_ID ||
-    !env.RAZORPAY_KEY_SECRET
-  ) {
+  const razorpay = await getRazorpayClient();
+
+  if (!razorpay) {
+    if (env.NODE_ENV === "production" && !isTestRuntime()) {
+      throw new AppError("Online payment is temporarily unavailable. Please try again later.", 503);
+    }
+
     return {
       amount: Math.round(input.amount * 100),
       currency: input.currencyCode,
@@ -606,16 +726,11 @@ async function createRazorpayGatewayOrder(input: {
     };
   }
 
-  const razorpay = new Razorpay({
-    key_id: env.RAZORPAY_KEY_ID,
-    key_secret: env.RAZORPAY_KEY_SECRET,
-  });
-
   try {
     return (await razorpay.orders.create({
       amount: Math.round(input.amount * 100),
       currency: input.currencyCode,
-      receipt: input.receipt,
+      receipt: input.receipt.slice(0, 40),
     })) as RazorpayOrder;
   } catch (error) {
     if (env.NODE_ENV === "production") {
@@ -662,6 +777,56 @@ async function recordPaymentHistory(
   });
 }
 
+/**
+ * Credits a capture to the session exactly once. The capture key (gateway payment id, or a
+ * synthetic key for manual approvals) is claimed atomically in MongoDB before any amount is
+ * applied, so a replayed client confirmation, a duplicate webhook, or a confirmation racing
+ * a webhook can never double count the same money.
+ */
+async function captureOnce(
+  session: PaymentSessionDoc,
+  amount: number,
+  gateway: { razorpayPaymentId?: string; razorpaySignature?: string; captureKey?: string },
+) {
+  const captureKey = gateway.captureKey ?? gateway.razorpayPaymentId;
+
+  if (!captureKey) {
+    throw new AppError("Payment capture reference is missing", 400);
+  }
+
+  const alreadyCaptured = [...((session.capturedPaymentIds ?? []) as string[])];
+
+  if (alreadyCaptured.includes(captureKey)) {
+    return false;
+  }
+
+  const creditedAmount = Math.max(0, Math.min(amount, session.amount - session.paidAmount));
+  const capture = {
+    amount: creditedAmount,
+    capturedAt: new Date(),
+    key: captureKey,
+    razorpayPaymentId: gateway.razorpayPaymentId,
+    refundedAmount: 0,
+  };
+  const claim = await PaymentSession.updateOne(
+    { _id: session._id, capturedPaymentIds: { $ne: captureKey } },
+    { $addToSet: { capturedPaymentIds: captureKey }, $push: { captures: capture } },
+  );
+
+  if (!claim.modifiedCount) {
+    return false;
+  }
+
+  // Both arrays were persisted by the atomic claim; mirror them in memory only.
+  session.set("capturedPaymentIds", [...alreadyCaptured, captureKey]);
+  session.set("captures", [...((session.get("captures") ?? []) as unknown[]), capture]);
+  session.unmarkModified("capturedPaymentIds");
+  session.unmarkModified("captures");
+  applySuccessfulCapture(session, creditedAmount, gateway);
+  await session.save();
+  return true;
+}
+
 function applySuccessfulCapture(
   session: PaymentSessionDoc,
   amount: number,
@@ -690,8 +855,47 @@ function normalizeAmounts(amount: number, payableNow = amount) {
   return { amount: normalizedAmount, payableNow: normalizedPayableNow };
 }
 
-function getRazorpaySecret(name: "RAZORPAY_KEY_SECRET" | "RAZORPAY_WEBHOOK_SECRET") {
-  const secret = env[name];
+function rememberGatewayOrder(session: PaymentSessionDoc, gatewayOrderId: string) {
+  const known = [...((session.razorpayOrderIds ?? []) as string[])];
+
+  if (!known.includes(gatewayOrderId)) {
+    session.set("razorpayOrderIds", [...known, gatewayOrderId]);
+  }
+}
+
+/** Finds a session by its current or any earlier gateway order (retries create new ones). */
+async function findSessionByGatewayOrder(gatewayOrderId: string) {
+  return PaymentSession.findOne({
+    $or: [{ razorpayOrderId: gatewayOrderId }, { razorpayOrderIds: gatewayOrderId }],
+  });
+}
+
+async function getRazorpayCredentials() {
+  const [keyId, keySecret, enabled] = await Promise.all([
+    getRuntimeSetting("RAZORPAY_KEY_ID"),
+    getRuntimeSetting("RAZORPAY_KEY_SECRET"),
+    getRuntimeBooleanSetting("RAZORPAY_ENABLE_GATEWAY_CALLS", env.RAZORPAY_ENABLE_GATEWAY_CALLS),
+  ]);
+
+  return { enabled, keyId: keyId || "", keySecret: keySecret || "" };
+}
+
+async function getRazorpayClient() {
+  if (isTestRuntime()) {
+    return undefined;
+  }
+
+  const credentials = await getRazorpayCredentials();
+
+  if (!credentials.enabled || !credentials.keyId || !credentials.keySecret) {
+    return undefined;
+  }
+
+  return new Razorpay({ key_id: credentials.keyId, key_secret: credentials.keySecret });
+}
+
+async function getRazorpaySecret(name: "RAZORPAY_KEY_SECRET" | "RAZORPAY_WEBHOOK_SECRET") {
+  const secret = (await getRuntimeSetting(name)) || env[name];
 
   if (!secret) {
     throw new AppError(`${name} is not configured`, 500);

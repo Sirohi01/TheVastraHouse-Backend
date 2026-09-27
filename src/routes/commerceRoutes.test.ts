@@ -9,9 +9,11 @@ import { Cart } from "../models/Cart.js";
 import { GiftCard } from "../models/GiftCard.js";
 import { Product } from "../models/Product.js";
 import { StockLedger } from "../models/StockLedger.js";
+import { User } from "../models/User.js";
+import { queryResult, stubStatics } from "../testing/commerceStubs.js";
 import { emitAbandonedCartEvents, mergeGuestCartIntoUserCart } from "../services/cartService.js";
 
-test("cart add-to-cart uses server-side product price and placeholder stock", async (t) => {
+test("cart add-to-cart uses server-side product price and ledger stock", async (t) => {
   const originalProductFindOne = Product.findOne;
   const originalCartFindOne = Cart.findOne;
   const originalCartCreate = Cart.create;
@@ -22,7 +24,8 @@ test("cart add-to-cart uses server-side product price and placeholder stock", as
 
   (Product as unknown as { findOne: unknown }).findOne = () =>
     chain(buildProduct(productId, variantId));
-  (StockLedger as unknown as { find: unknown }).find = () => chain([]);
+  (StockLedger as unknown as { find: unknown }).find = () =>
+    chain([{ available: 5, sku: "TVH-SILK-M-0001" }]);
   (Cart as unknown as { findOne: unknown }).findOne = () => Promise.resolve(cart ?? null);
   (Cart as unknown as { create: unknown }).create = (payload: Record<string, unknown>) => {
     cart = makeCart(payload);
@@ -56,7 +59,7 @@ test("cart add-to-cart uses server-side product price and placeholder stock", as
   assert.equal(payload.cart.totals.subtotal, 3998);
 });
 
-test("cart add-to-cart uses inventory ledger stock before product placeholder stock", async (t) => {
+test("cart add-to-cart rejects quantities above ledger stock even if the product claims more", async (t) => {
   const originalProductFindOne = Product.findOne;
   const originalCartFindOne = Cart.findOne;
   const originalCartCreate = Cart.create;
@@ -118,7 +121,8 @@ test("cart keeps the same variant as separate regular and pre-order lines", asyn
         startAt: new Date("2020-01-01T00:00:00.000Z"),
       }),
     );
-  (StockLedger as unknown as { find: unknown }).find = () => chain([]);
+  (StockLedger as unknown as { find: unknown }).find = () =>
+    chain([{ available: 5, sku: "TVH-SILK-M-0001" }]);
   (Cart as unknown as { findOne: unknown }).findOne = () => Promise.resolve(cart ?? null);
   (Cart as unknown as { create: unknown }).create = (payload: Record<string, unknown>) => {
     cart = makeCart(payload);
@@ -320,7 +324,8 @@ test("guest cart merges into logged-in cart without trusting stale quantities", 
 
   (Product as unknown as { findOne: unknown }).findOne = () =>
     chain(buildProduct(productId, variantId, 4));
-  (StockLedger as unknown as { find: unknown }).find = () => chain([]);
+  (StockLedger as unknown as { find: unknown }).find = () =>
+    chain([{ available: 4, sku: "TVH-SILK-M-0001" }]);
   (Cart as unknown as { findOne: unknown }).findOne = (filter: { guestSessionId?: string }) =>
     Promise.resolve(filter.guestSessionId ? guestCart : userCart);
   (Cart as unknown as { deleteOne: unknown }).deleteOne = () => {
@@ -334,6 +339,7 @@ test("guest cart merges into logged-in cart without trusting stale quantities", 
     (StockLedger as unknown as { find: unknown }).find = originalStockLedgerFind;
   });
 
+  t.after(stubStatics(User, { findById: () => queryResult(null) }));
   const merged = await mergeGuestCartIntoUserCart("guest-session-merge", String(userCart.userId));
 
   assert.equal(merged.items[0].quantity, 4);
@@ -372,6 +378,12 @@ test("guest cart merge skips stale product variants", async (t) => {
     (Cart as unknown as { deleteOne: unknown }).deleteOne = originalCartDeleteOne;
   });
 
+  t.after(stubStatics(User, { findById: () => queryResult(null) }));
+  t.after(
+    stubStatics(StockLedger, {
+      find: () => queryResult([{ available: 4, sku: "TVH-SILK-M-0001" }]),
+    }),
+  );
   const merged = await mergeGuestCartIntoUserCart(
     "guest-session-stale-variant",
     String(userCart.userId),

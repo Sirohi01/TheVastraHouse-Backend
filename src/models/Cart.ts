@@ -110,6 +110,9 @@ const cartSchema = new Schema(
     totals: { type: cartTotalsSchema, default: () => ({}) },
     attribution: attributionSchema,
     lastActivityAt: { type: Date, default: Date.now, index: true },
+    // Captured at checkout so abandoned-cart recovery can reach guests who opted in.
+    contactEmail: { type: String, trim: true, lowercase: true },
+    marketingConsent: { type: Boolean, default: false },
     abandonedCartEventEmittedAt: { type: Date },
   },
   { timestamps: true },

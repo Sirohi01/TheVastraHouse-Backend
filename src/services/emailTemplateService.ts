@@ -1,3 +1,5 @@
+import { env } from "../config/env.js";
+
 export type AuthEmailTemplate = {
   subject: string;
   text: string;
@@ -5,25 +7,74 @@ export type AuthEmailTemplate = {
   attachments?: Array<{ content: Buffer; filename: string; mimeType: string }>;
 };
 
+function frontendUrl(path: string) {
+  return `${env.FRONTEND_PUBLIC_URL.replace(/\/$/, "")}${path}`;
+}
+
+function actionEmail(input: { heading: string; body: string; cta: string; href: string; footer: string }) {
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#fffaf1;color:#2c231d;border:1px solid #e5dac7">
+      <div style="background:#8b1e2d;color:#fff;padding:24px">
+        <h1 style="margin:0;font-size:24px;letter-spacing:1px">The Vastra House</h1>
+      </div>
+      <div style="padding:24px">
+        <h2 style="margin-top:0;font-size:20px">${escapeHtml(input.heading)}</h2>
+        <p>${escapeHtml(input.body)}</p>
+        <a href="${input.href}" style="display:inline-block;background:#8b1e2d;color:#fff;text-decoration:none;padding:12px 18px;border-radius:6px">${escapeHtml(input.cta)}</a>
+        <p style="margin-top:22px;color:#6b625a;font-size:13px">${escapeHtml(input.footer)}</p>
+        <p style="color:#6b625a;font-size:12px;word-break:break-all">${input.href}</p>
+      </div>
+    </div>`;
+}
+
 export function buildEmailVerificationTemplate(token: string): AuthEmailTemplate {
+  const href = frontendUrl(`/verify-email?token=${encodeURIComponent(token)}`);
   return {
+    html: actionEmail({
+      body: "Confirm your email address to finish setting up your account.",
+      cta: "Verify email",
+      footer: "This link expires in 24 hours. If you did not create an account, ignore this email.",
+      heading: "Verify your email",
+      href,
+    }),
     subject: "Verify your The Vastra House account",
-    text: `Use this verification token to verify your account: ${token}`,
+    text: `Verify your The Vastra House account: ${href}
+
+This link expires in 24 hours.`,
   };
 }
 
 export function buildPasswordResetTemplate(token: string): AuthEmailTemplate {
+  const href = frontendUrl(`/reset-password?token=${encodeURIComponent(token)}`);
   return {
+    html: actionEmail({
+      body: "We received a request to reset your password. Use the button below to choose a new one.",
+      cta: "Reset password",
+      footer: "This link expires in 30 minutes and can be used once. If you did not request it, you can ignore this email.",
+      heading: "Reset your password",
+      href,
+    }),
     subject: "Reset your The Vastra House password",
-    text: `Use this password reset token within 30 minutes: ${token}`,
+    text: `Reset your password (valid for 30 minutes): ${href}`,
   };
 }
 
 export function buildOtpTemplate(code: string): AuthEmailTemplate {
   return {
-    subject: "Your The Vastra House OTP",
-    text: `Your OTP is ${code}. It expires in 10 minutes.`,
+    subject: "Your The Vastra House verification code",
+    text: `Your verification code is ${code}. It expires in 10 minutes. Never share this code.`,
   };
+}
+
+export function buildTotpEnrolmentTemplate(code: string): AuthEmailTemplate {
+  return {
+    subject: "Confirm two-factor setup for your admin account",
+    text: `Your admin two-factor setup code is ${code}. It expires in 10 minutes. If you did not just sign in, change your password immediately.`,
+  };
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 }
 
 export function buildOrderConfirmationTemplate(input: {

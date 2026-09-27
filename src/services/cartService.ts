@@ -4,6 +4,7 @@ import { AbandonedCartEvent } from "../models/AbandonedCartEvent.js";
 import { Cart } from "../models/Cart.js";
 import { GiftCard } from "../models/GiftCard.js";
 import { Product } from "../models/Product.js";
+import { User } from "../models/User.js";
 import { Wishlist } from "../models/Wishlist.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { getAvailableStockBySku } from "./inventoryService.js";
@@ -98,7 +99,7 @@ type ProductLean = {
     basePrice: number;
     salePrice?: number;
     currencyCode?: string;
-    stockPlaceholder?: number;
+    priceTiers?: Array<{ priceListCode: string; price: number }>;
     preOrder?: PreOrderVariantSnapshot;
     media?: unknown[];
   }>;
@@ -140,7 +141,12 @@ export async function getOrCreateCart(identity: CommerceIdentity) {
 export async function addCartItem(identity: CommerceIdentity, input: AddCartItemInput) {
   const cart = await getOrCreateCart(identity);
   const purchaseMode = normalizePurchaseMode(input.purchaseMode);
-  const snapshot = await getProductVariantSnapshot(input.productId, input.variantId, purchaseMode);
+  const snapshot = await getProductVariantSnapshot(
+    input.productId,
+    input.variantId,
+    purchaseMode,
+    await buyerPriceList(identity.userId),
+  );
 
   if (snapshot.stock < input.quantity) {
     throw new AppError("Requested quantity is not available", 409);
@@ -215,6 +221,7 @@ export async function updateCartItemQuantity(
     String(line.productId),
     String(line.variantId),
     normalizePurchaseMode(line.purchaseMode),
+    await buyerPriceList(identity.userId),
   );
 
   if (snapshot.stock < quantity) {
@@ -257,6 +264,7 @@ export async function updateCartItemPurchaseMode(
     String(line.productId),
     String(line.variantId),
     nextMode,
+    await buyerPriceList(identity.userId),
   );
 
   if (snapshot.stock < line.quantity) {
@@ -373,6 +381,7 @@ export async function mergeGuestCartIntoUserCart(guestSessionId: string, userId:
         String(guestLine.productId),
         String(guestLine.variantId),
         mode,
+        await buyerPriceList(userId),
       );
     } catch {
       continue;
@@ -547,8 +556,20 @@ export async function emitAbandonedCartEvents(now = new Date()) {
   let emitted = 0;
 
   for (const cart of carts) {
+    // Only consented contacts may receive recovery emails (FR-MKT-04 + consent rules).
+    let email: string | undefined;
+    if (cart.userId) {
+      const user = (await User.findById(cart.userId)
+        .select("email notificationPreferences.marketingEmail")
+        .lean()) as { email?: string; notificationPreferences?: { marketingEmail?: boolean } } | null;
+      email = user?.notificationPreferences?.marketingEmail ? user.email : undefined;
+    } else if (cart.marketingConsent && cart.contactEmail) {
+      email = cart.contactEmail;
+    }
+
     await AbandonedCartEvent.create({
       cartId: cart._id,
+      email,
       userId: cart.userId,
       guestSessionId: cart.guestSessionId,
       itemCount: cartLines(cart).reduce(
@@ -576,6 +597,7 @@ async function saveCartActivity(cart: Awaited<ReturnType<typeof getOrCreateCart>
 }
 
 async function refreshCartLineSnapshots(cart: Awaited<ReturnType<typeof getOrCreateCart>>) {
+  const priceListCode = await buyerPriceList(cart.userId);
   for (const line of cartLines(cart)) {
     const mode = normalizePurchaseMode(
       line.purchaseMode ?? (line.preOrder?.enabled ? "pre_order" : "regular"),
@@ -586,6 +608,7 @@ async function refreshCartLineSnapshots(cart: Awaited<ReturnType<typeof getOrCre
         String(line.productId),
         String(line.variantId),
         mode,
+        priceListCode,
       );
       applySnapshotToLine(line, snapshot);
     } catch {
@@ -595,6 +618,7 @@ async function refreshCartLineSnapshots(cart: Awaited<ReturnType<typeof getOrCre
             String(line.productId),
             String(line.variantId),
             "regular",
+            priceListCode,
           );
           applySnapshotToLine(line, regularSnapshot);
           continue;
@@ -659,10 +683,35 @@ async function calculateCartTotals(cart: Awaited<ReturnType<typeof getOrCreateCa
   };
 }
 
+/**
+ * Approved wholesale accounts buy at their negotiated price list. Resolved from the account on
+ * the server, never from the client, so retail sessions can never see or use tier prices.
+ */
+export async function buyerPriceList(userId?: unknown): Promise<string | undefined> {
+  if (!userId) {
+    return undefined;
+  }
+
+  const user = (await User.findById(String(userId))
+    .select("customerType wholesaleStatus priceListCode")
+    .lean()) as {
+    customerType?: string;
+    wholesaleStatus?: string;
+    priceListCode?: string;
+  } | null;
+
+  if (user?.customerType === "wholesale" && user.wholesaleStatus === "approved") {
+    return (user.priceListCode || "WHOLESALE").toUpperCase();
+  }
+
+  return undefined;
+}
+
 async function getProductVariantSnapshot(
   productId: string,
   variantId: string,
   purchaseMode: PurchaseMode = "regular",
+  priceListCode?: string,
 ): Promise<ProductVariantSnapshot> {
   const product = (await Product.findOne({
     _id: productId,
@@ -684,7 +733,11 @@ async function getProductVariantSnapshot(
 
   const inventoryAvailable = await getAvailableStockBySku(variant.sku);
   const preOrderActive = isPreOrderActive(variant.preOrder);
-  const regularStock = inventoryAvailable ?? variant.stockPlaceholder ?? 0;
+  // Inventory ledger is authoritative; a SKU without ledger rows has no sellable stock.
+  const regularStock = inventoryAvailable ?? 0;
+  const tierPrice = priceListCode
+    ? variant.priceTiers?.find((tier) => tier.priceListCode.toUpperCase() === priceListCode)?.price
+    : undefined;
 
   if (purchaseMode === "pre_order" && !preOrderActive) {
     throw new AppError("Variant is not available for pre-order", 409);
@@ -703,7 +756,7 @@ async function getProductVariantSnapshot(
     media: (variant.media?.[0] ?? product.media?.[0]) as unknown,
     preOrder: purchaseMode === "pre_order" ? variant.preOrder : undefined,
     preOrderOption: preOrderActive ? variant.preOrder : undefined,
-    unitPrice: variant.salePrice ?? variant.basePrice,
+    unitPrice: tierPrice ?? variant.salePrice ?? variant.basePrice,
     hsnCode: product.hsnCode,
     gstRate: product.gstRate,
     currencyCode: variant.currencyCode ?? "INR",

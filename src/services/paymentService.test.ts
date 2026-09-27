@@ -22,6 +22,7 @@ import {
   verifyRazorpayPayment,
 } from "./paymentService.js";
 import { finalizeOrderAfterPayment } from "./orderFulfillmentService.js";
+import { stubPaymentCaptureClaims } from "../testing/commerceStubs.js";
 
 test("Razorpay payment verification confirms partial capture and tracks outstanding balance", async (t) => {
   setRazorpaySecrets();
@@ -583,6 +584,7 @@ function patchOrderModels(overrides: Record<string, unknown> = {}) {
 
 function patchHistoryOnly() {
   const originalHistoryCreate = PaymentHistory.create;
+  const restoreClaims = stubPaymentCaptureClaims();
   const events: string[] = [];
   (PaymentHistory as unknown as { create: unknown }).create = (payload: { event: string }) => {
     events.push(payload.event);
@@ -593,6 +595,7 @@ function patchHistoryOnly() {
     events,
     restore() {
       (PaymentHistory as unknown as { create: unknown }).create = originalHistoryCreate;
+      restoreClaims();
     },
   };
 }

@@ -1,14 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
-import { env } from "../config/env.js";
 import { attachOptionalUser } from "../middleware/authMiddleware.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { Order } from "../models/Order.js";
 import { PaymentSession } from "../models/PaymentSession.js";
 import { createOrderFromCheckout, previewCheckout } from "../services/checkoutService.js";
-import { createBalancePaymentForOrder, verifyRazorpayPayment } from "../services/paymentService.js";
-import { getRuntimeBooleanSetting, getRuntimeSetting } from "../services/runtimeSettingsService.js";
+import {
+  createBalancePaymentForOrder,
+  getRazorpayPublicConfig,
+  verifyRazorpayPayment,
+} from "../services/paymentService.js";
 
 export const checkoutRouter = Router();
 
@@ -33,23 +35,17 @@ const checkoutSchema = z
     guestEmail: z.string().email().optional(),
     whatsappOptIn: z.boolean().optional(),
     shippingMethod: z.enum(["standard", "express"]),
-    paymentMethod: z.enum(["razorpay", "cod", "manual_bank_transfer", "upi"]),
+    // v1 storefront policy (FR-PAY-01): Razorpay full payment or secured COD only.
+    // Manual bank transfer / direct UPI remain admin-side operational capabilities.
+    paymentMethod: z.enum(["razorpay", "cod", "credit_terms"]),
     paymentMode: z.enum(["full", "advance", "balance"]).optional(),
     payableNow: z.coerce.number().positive().optional(),
     couponCode: z.string().max(80).optional(),
     storeCreditRequested: z.coerce.number().nonnegative().optional(),
     rewardValueRequested: z.coerce.number().nonnegative().optional(),
-    manualScreenshot: z
-      .object({
-        url: z.string().url(),
-        type: z.literal("image"),
-        aspectRatio: z.string().optional(),
-        altText: z.string().max(160).optional(),
-      })
-      .strict()
-      .optional(),
-    upiReference: z.string().max(120).optional(),
     notes: z.string().max(500).optional(),
+    saveAddress: z.boolean().optional(),
+    marketingConsent: z.boolean().optional(),
   })
   .strict();
 
@@ -61,15 +57,15 @@ const orderCreationLimit = rateLimit({
   max: 20,
 });
 
+const paymentConfirmLimit = rateLimit({
+  keyPrefix: "checkout-payment-confirm",
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+});
+
 checkoutRouter.get("/razorpay/config", async (_req, res, next) => {
   try {
-    res.json({
-      gatewayEnabled: await getRuntimeBooleanSetting(
-        "RAZORPAY_ENABLE_GATEWAY_CALLS",
-        env.RAZORPAY_ENABLE_GATEWAY_CALLS,
-      ),
-      keyId: (await getRuntimeSetting("RAZORPAY_KEY_ID")) ?? env.RAZORPAY_KEY_ID ?? "",
-    });
+    res.json(await getRazorpayPublicConfig());
   } catch (error) {
     next(error);
   }
@@ -78,7 +74,7 @@ checkoutRouter.get("/razorpay/config", async (_req, res, next) => {
 checkoutRouter.post(
   "/preview",
   validateRequest({
-    body: checkoutSchema.omit({ paymentMethod: true, manualScreenshot: true, upiReference: true }),
+    body: checkoutSchema.omit({ paymentMethod: true }),
   }),
   async (req, res, next) => {
     try {
@@ -104,6 +100,7 @@ checkoutRouter.post(
       const result = await createOrderFromCheckout({
         ...req.body,
         guestSessionId: req.header("X-Guest-Session-Id"),
+        ipAddress: req.ip,
         userId: req.user?.id,
       });
       res.status(201).json(result);
@@ -115,6 +112,7 @@ checkoutRouter.post(
 
 checkoutRouter.post(
   "/razorpay/confirm",
+  paymentConfirmLimit,
   validateRequest({
     body: z
       .object({

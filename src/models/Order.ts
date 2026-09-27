@@ -119,6 +119,51 @@ const shipmentSchema = new Schema(
     trackingUrl: { type: String, trim: true },
     dispatchedAt: { type: Date },
     deliveredAt: { type: Date },
+    provider: { type: String, enum: ["manual", "shiprocket"], default: "manual" },
+    providerShipmentId: { type: String, trim: true },
+    providerOrderId: { type: String, trim: true },
+    labelUrl: { type: String, trim: true },
+    courierStatus: { type: String, trim: true },
+    events: [
+      {
+        _id: false,
+        status: { type: String, trim: true },
+        location: { type: String, trim: true },
+        occurredAt: { type: Date },
+      },
+    ],
+  },
+  { _id: false },
+);
+
+const financialsSchema = new Schema(
+  {
+    couponRedemptionId: { type: Schema.Types.ObjectId, ref: "CouponRedemption" },
+    storeCreditRedeemed: { type: Number, min: 0, default: 0 },
+    rewardPointsRedeemed: { type: Number, min: 0, default: 0 },
+    rewardPointsEarned: { type: Number, min: 0, default: 0 },
+    giftCardRedemptions: [
+      {
+        _id: false,
+        code: { type: String, trim: true, uppercase: true },
+        amount: { type: Number, min: 0 },
+      },
+    ],
+    referralRewardId: { type: Schema.Types.ObjectId, ref: "Referral" },
+    reversedAt: { type: Date },
+    reversalSummary: { type: Schema.Types.Mixed },
+  },
+  { _id: false },
+);
+
+const riskSchema = new Schema(
+  {
+    score: { type: Number, min: 0, default: 0 },
+    flags: [{ type: String, trim: true }],
+    status: { type: String, enum: ["clear", "flagged", "held", "released"], default: "clear" },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    reviewedAt: { type: Date },
+    reviewNote: { type: String, trim: true },
   },
   { _id: false },
 );
@@ -135,7 +180,7 @@ const orderSchema = new Schema(
     status: { type: String, enum: orderStatuses, required: true, index: true },
     paymentMethod: {
       type: String,
-      enum: ["razorpay", "cod", "manual_bank_transfer", "upi"],
+      enum: ["razorpay", "cod", "manual_bank_transfer", "upi", "credit_terms"],
       required: true,
     },
     paymentMode: {
@@ -159,6 +204,13 @@ const orderSchema = new Schema(
     shipment: shipmentSchema,
     stockReservations: [stockReservationSchema],
     notes: { type: String, trim: true },
+    couponCode: { type: String, trim: true, uppercase: true },
+    financials: { type: financialsSchema, default: () => ({}) },
+    risk: { type: riskSchema, default: () => ({}) },
+    priceListCode: { type: String, trim: true, uppercase: true },
+    customerType: { type: String, enum: ["retail", "wholesale"], default: "retail" },
+    paymentTerms: { type: String, trim: true },
+    reviewRequestSentAt: { type: Date },
     attribution: attributionSchema,
     balancePaymentNotifiedAt: { type: Date },
   },
@@ -167,6 +219,8 @@ const orderSchema = new Schema(
 
 orderSchema.index({ userId: 1, createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ "risk.status": 1, createdAt: -1 });
+orderSchema.index({ guestEmail: 1, createdAt: -1 });
 orderSchema.index({ "attribution.utmSource": 1, createdAt: -1 });
 
 export type OrderDocument = InferSchemaType<typeof orderSchema>;
