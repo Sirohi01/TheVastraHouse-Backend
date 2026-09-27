@@ -121,6 +121,25 @@ This ledger records continuation work after the previous staged implementation. 
 - Frontend `npm run build`: PASS with the same two warnings.
 - Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
 
+## 2026-09-27 Next Image Warning Cleanup
+
+### What Was Done
+
+- Replaced remaining raw review thumbnail `<img>` elements with `next/image`.
+- Cleared the two persistent Next image optimization lint warnings.
+
+### Files Touched
+
+- `frontend/src/components/catalog/ProductDetailClient.tsx`
+- `frontend/src/components/catalog/ReviewForm.tsx`
+- `backend/docs/16-completion-progress.md`
+
+### Test Status
+
+- Frontend `npm run lint`: PASS with no warnings.
+- Frontend `npm run build`: PASS.
+- Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
+
 ## 2026-09-27 Admin Reviews Moderation
 
 ### What Was Done
