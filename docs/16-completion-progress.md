@@ -121,6 +121,28 @@ This ledger records continuation work after the previous staged implementation. 
 - Frontend `npm run build`: PASS with the same two warnings.
 - Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
 
+## 2026-09-27 Checkout Saved Addresses And Discounts
+
+### What Was Done
+
+- Checkout now loads saved account addresses and can fill the checkout address form from a selected saved address.
+- Checkout can save a newly entered address to the account via the existing checkout `saveAddress` payload.
+- Added explicit coupon apply/remove controls; server preview remains the validation source and returns validation errors.
+- Added gift-card application from checkout through the existing cart gift-card validation API.
+- Store credit and reward redemption remain server-previewed and are presented alongside coupon/gift card controls.
+
+### Files Touched
+
+- `frontend/src/components/checkout/CheckoutClient.tsx`
+- `frontend/src/lib/checkout.ts`
+- `backend/docs/16-completion-progress.md`
+
+### Test Status
+
+- Frontend `npm run lint`: PASS with two existing Next `<img>` warnings.
+- Frontend `npm run build`: PASS with the same two warnings.
+- Frontend `npm run typecheck`: PASS after build regenerated `.next/types`.
+
 ## 2026-09-27 Admin Growth Workspaces
 
 ### What Was Done
