@@ -70,9 +70,7 @@ export function sanitizeRichHtml(html: string): string {
 
 /** Plain text for excerpts, meta descriptions and reading-time estimates. */
 export function htmlToPlainText(html: string): string {
-  return sanitizeHtml(html, { allowedAttributes: {}, allowedTags: [] })
-    .replace(/\s+/g, " ")
-    .trim();
+  return sanitizeHtml(html, { allowedAttributes: {}, allowedTags: [] }).replace(/\s+/g, " ").trim();
 }
 
 export function estimateReadingMinutes(html: string): number {

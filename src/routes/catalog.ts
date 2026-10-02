@@ -303,7 +303,10 @@ catalogRouter.get("/categories/:slug", getCategoryBySlug);
 catalogRouter.get("/collections/:slug", getCollectionBySlug);
 
 // ---------- Admin ----------
-const requireCatalogManage = [requireAuth, requirePermission({ module: "catalog", action: "manage" })];
+const requireCatalogManage = [
+  requireAuth,
+  requirePermission({ module: "catalog", action: "manage" }),
+];
 
 catalogRouter.get("/admin/lookups", ...requireCatalogManage, listAdminLookups);
 catalogRouter.get("/admin/products", ...requireCatalogManage, listProducts);
@@ -398,11 +401,18 @@ catalogRouter.delete(
 );
 
 registerTaxonomyRoutes("categories", Category as CatalogModel, taxonomyInputSchema, "/categories/");
-registerTaxonomyRoutes("collections", Collection as CatalogModel, taxonomyInputSchema, "/collections/");
+registerTaxonomyRoutes(
+  "collections",
+  Collection as CatalogModel,
+  taxonomyInputSchema,
+  "/collections/",
+);
 registerTaxonomyRoutes("tags", Tag as CatalogModel, tagInputSchema);
 
 async function viewerFor(req: Request) {
-  return { priceListCode: await buyerPriceList(req.user?.type === "customer" ? req.user.id : undefined) };
+  return {
+    priceListCode: await buyerPriceList(req.user?.type === "customer" ? req.user.id : undefined),
+  };
 }
 
 async function listProducts(req: Request, res: Response, next: NextFunction) {
@@ -436,7 +446,10 @@ async function getCatalogHome(req: Request, res: Response, next: NextFunction) {
     res.json({
       categories,
       collections,
-      products: await serializePublicProducts(products as Array<Record<string, unknown>>, await viewerFor(req)),
+      products: await serializePublicProducts(
+        products as Array<Record<string, unknown>>,
+        await viewerFor(req),
+      ),
     });
   } catch (error) {
     next(error);
@@ -537,7 +550,11 @@ async function getCatalogFilters(_req: Request, res: Response, next: NextFunctio
 /** Indexable URLs only: noindex entities are excluded from sitemaps. */
 async function getSitemapData(_req: Request, res: Response, next: NextFunction) {
   try {
-    const activeFilter = { active: true, status: { $ne: "deleted" }, "seo.robotsIndex": { $ne: false } };
+    const activeFilter = {
+      active: true,
+      status: { $ne: "deleted" },
+      "seo.robotsIndex": { $ne: false },
+    };
     const [products, categories, collections] = await Promise.all([
       Product.find(activeFilter).select("slug updatedAt name media").lean(),
       Category.find(activeFilter).select("slug updatedAt").lean(),
@@ -782,7 +799,10 @@ async function listProductsWithVisibility(
     ]);
     const total = (countRows as Array<{ total: number }>)[0]?.total ?? 0;
     const data: unknown[] = options.publicOnly
-      ? await serializePublicProducts(products as Array<Record<string, unknown>>, await viewerFor(req))
+      ? await serializePublicProducts(
+          products as Array<Record<string, unknown>>,
+          await viewerFor(req),
+        )
       : await attachAdminStock(products as Array<Record<string, unknown>>);
 
     res.json({ ...buildPaginatedResult(data, total, pagination), suggestion });
@@ -827,7 +847,10 @@ async function getProductBySlug(req: Request, res: Response, next: NextFunction)
       throw new AppError("Product not found", 404);
     }
 
-    const [serialized] = await serializePublicProducts([product as Record<string, unknown>], await viewerFor(req));
+    const [serialized] = await serializePublicProducts(
+      [product as Record<string, unknown>],
+      await viewerFor(req),
+    );
     res.json({ product: serialized });
   } catch (error) {
     next(error);
@@ -939,7 +962,11 @@ async function createProduct(req: Request, res: Response, next: NextFunction) {
         normalizeVariantIdentity(variant, slug, index),
     );
     await assertSkusAvailable(variants.map((variant: { sku: string }) => variant.sku));
-    const product = await Product.create({ ...req.body, slug, variants: stripStockInput(variants) });
+    const product = await Product.create({
+      ...req.body,
+      slug,
+      variants: stripStockInput(variants),
+    });
     product.computedBadges = computeBadges(product);
     await product.save();
     await ensureLedgersForVariants(variants);
@@ -1073,7 +1100,9 @@ function normalizeVariantIdentity(
 
 /** Opening stock is written to the inventory ledger, never stored on the product. */
 function stripStockInput<T extends Record<string, unknown>>(variants: T[]) {
-  return variants.map(({ initialStock: _initial, stockPlaceholder: _placeholder, ...variant }) => variant);
+  return variants.map(
+    ({ initialStock: _initial, stockPlaceholder: _placeholder, ...variant }) => variant,
+  );
 }
 
 async function deleteProduct(req: Request, res: Response, next: NextFunction) {
@@ -1190,7 +1219,9 @@ function registerTaxonomyRoutes(
       try {
         const id = String(req.params.id);
         const update = { ...req.body };
-        const existing = (await model.findById(id).select("slug").lean()) as { slug?: string } | null;
+        const existing = (await model.findById(id).select("slug").lean()) as {
+          slug?: string;
+        } | null;
 
         if (!existing) {
           throw new AppError("Catalog item not found", 404);
@@ -1204,7 +1235,11 @@ function registerTaxonomyRoutes(
         const item = await model.findByIdAndUpdate(id, { $set: update }, { new: true });
 
         if (publicPrefix && update.slug && existing.slug && update.slug !== existing.slug) {
-          await recordSlugChange(`${publicPrefix}${existing.slug}`, `${publicPrefix}${update.slug}`, req.user?.id);
+          await recordSlugChange(
+            `${publicPrefix}${existing.slug}`,
+            `${publicPrefix}${update.slug}`,
+            req.user?.id,
+          );
         }
 
         invalidateSearchIndex();
@@ -1246,8 +1281,10 @@ function buildPriceMatch(query: Record<string, unknown>) {
   const max = Number(query.maxPrice);
   const range: Record<string, number> = {};
 
-  if (typeof query.minPrice === "string" && query.minPrice && Number.isFinite(min)) range.$gte = min;
-  if (typeof query.maxPrice === "string" && query.maxPrice && Number.isFinite(max)) range.$lte = max;
+  if (typeof query.minPrice === "string" && query.minPrice && Number.isFinite(min))
+    range.$gte = min;
+  if (typeof query.maxPrice === "string" && query.maxPrice && Number.isFinite(max))
+    range.$lte = max;
 
   return Object.keys(range).length ? { effectivePrice: range } : undefined;
 }
@@ -1257,7 +1294,10 @@ function castObjectIds(filter: Record<string, unknown>) {
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(filter)) {
-    if (["brandId", "categoryIds", "collectionIds", "tagIds"].includes(key) && typeof value === "string") {
+    if (
+      ["brandId", "categoryIds", "collectionIds", "tagIds"].includes(key) &&
+      typeof value === "string"
+    ) {
       if (!Types.ObjectId.isValid(value)) {
         throw new AppError(`Invalid ${key} filter`, 400);
       }

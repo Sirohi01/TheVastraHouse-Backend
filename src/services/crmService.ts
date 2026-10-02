@@ -60,7 +60,11 @@ export function classifyCustomer(
     ? (now.getTime() - stats.lastOrderAt.getTime()) / 86_400_000
     : undefined;
 
-  if (stats.orderCount > 0 && daysSinceLastOrder !== undefined && daysSinceLastOrder > thresholds.inactiveDays) {
+  if (
+    stats.orderCount > 0 &&
+    daysSinceLastOrder !== undefined &&
+    daysSinceLastOrder > thresholds.inactiveDays
+  ) {
     return "inactive";
   }
   if (stats.lifetimeValue >= thresholds.vipSpend || stats.orderCount >= thresholds.vipOrders) {
@@ -108,7 +112,10 @@ export async function recomputeCustomerSegments(batchSize = 500) {
     const stats = await statsForUsers(users.map((user) => user._id));
     await User.bulkWrite(
       users.map((user) => {
-        const row: CustomerStats = stats.get(String(user._id)) ?? { lifetimeValue: 0, orderCount: 0 };
+        const row: CustomerStats = stats.get(String(user._id)) ?? {
+          lifetimeValue: 0,
+          orderCount: 0,
+        };
         return {
           updateOne: {
             filter: { _id: user._id },
@@ -144,12 +151,19 @@ export async function listCustomers(
   if (filter.customerType) query.customerType = filter.customerType;
   if (filter.search) {
     const pattern = { $options: "i", $regex: filter.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") };
-    query.$or = [{ email: pattern }, { firstName: pattern }, { lastName: pattern }, { phone: pattern }];
+    query.$or = [
+      { email: pattern },
+      { firstName: pattern },
+      { lastName: pattern },
+      { phone: pattern },
+    ];
   }
 
   const [items, total] = await Promise.all([
     User.find(query)
-      .select("email firstName lastName phone customerType wholesaleStatus lifetimeOrderValue crm createdAt lastLoginAt marketingConsentAt status")
+      .select(
+        "email firstName lastName phone customerType wholesaleStatus lifetimeOrderValue crm createdAt lastLoginAt marketingConsentAt status",
+      )
       .sort({ lifetimeOrderValue: -1, createdAt: -1 })
       .skip(pagination.skip)
       .limit(pagination.limit)
@@ -167,13 +181,24 @@ export async function getSegmentCounts() {
   ])) as Array<{ _id: string | null; count: number }>;
 
   return Object.fromEntries(
-    CUSTOMER_SEGMENTS.map((segment) => [segment, rows.find((row) => row._id === segment)?.count ?? 0]),
+    CUSTOMER_SEGMENTS.map((segment) => [
+      segment,
+      rows.find((row) => row._id === segment)?.count ?? 0,
+    ]),
   );
 }
 
 type TimelineEvent = {
   at: Date;
-  kind: "order" | "order_status" | "review" | "ticket" | "notification" | "return" | "note" | "account";
+  kind:
+    | "order"
+    | "order_status"
+    | "review"
+    | "ticket"
+    | "notification"
+    | "return"
+    | "note"
+    | "account";
   title: string;
   detail?: string;
   href?: string;
@@ -187,99 +212,137 @@ export async function getCustomerProfile(userId: string) {
 
   const user = (await User.findOne({ _id: userId, type: "customer" })
     .select("-passwordHash -totpSecret")
-    .lean()) as Record<string, unknown> & {
-    email: string;
-    createdAt?: Date;
-    crm?: { notes?: Array<{ body: string; createdAt: Date; authorId?: unknown }> };
-    customerType?: string;
-  } | null;
+    .lean()) as
+    | (Record<string, unknown> & {
+        email: string;
+        createdAt?: Date;
+        crm?: { notes?: Array<{ body: string; createdAt: Date; authorId?: unknown }> };
+        customerType?: string;
+      })
+    | null;
 
   if (!user) {
     throw new AppError("Customer not found", 404);
   }
 
   const objectId = new Types.ObjectId(userId);
-  const [orders, reviews, tickets, notifications, returns, statsMap, thresholds] = await Promise.all([
-    Order.find({ userId: objectId })
-      .select("orderNumber status totals createdAt paymentMethod items.productName items.quantity")
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean() as unknown as Promise<Array<{ orderNumber: string; status: string; totals: { grandTotal: number }; createdAt: Date }>>,
-    ProductReview.find({ userId: objectId })
-      .populate("productId", "name slug")
-      .select("rating title moderationStatus createdAt productId")
-      .limit(50)
-      .lean() as unknown as Promise<Array<{ rating: number; moderationStatus: string; createdAt: Date; productId?: { name?: string } }>>,
-    SupportTicket.find({ $or: [{ userId: objectId }, { email: user.email }] })
-      .select("ticketNumber subject status createdAt")
-      .limit(50)
-      .lean() as unknown as Promise<Array<{ ticketNumber: string; subject: string; status: string; createdAt: Date }>>,
-    NotificationLog.find({ to: user.email })
-      .select("eventType channel status subject createdAt")
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .lean() as unknown as Promise<Array<{ eventType: string; channel: string; status: string; subject?: string; createdAt: Date }>>,
-    ReturnRequest.find({ userId: objectId })
-      .select("returnNumber status createdAt")
-      .limit(50)
-      .lean() as unknown as Promise<Array<{ returnNumber?: string; status: string; createdAt: Date }>>,
-    statsForUsers([objectId]),
-    segmentThresholds(),
-  ]);
+  const [orders, reviews, tickets, notifications, returns, statsMap, thresholds] =
+    await Promise.all([
+      Order.find({ userId: objectId })
+        .select(
+          "orderNumber status totals createdAt paymentMethod items.productName items.quantity",
+        )
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean() as unknown as Promise<
+        Array<{
+          orderNumber: string;
+          status: string;
+          totals: { grandTotal: number };
+          createdAt: Date;
+        }>
+      >,
+      ProductReview.find({ userId: objectId })
+        .populate("productId", "name slug")
+        .select("rating title moderationStatus createdAt productId")
+        .limit(50)
+        .lean() as unknown as Promise<
+        Array<{
+          rating: number;
+          moderationStatus: string;
+          createdAt: Date;
+          productId?: { name?: string };
+        }>
+      >,
+      SupportTicket.find({ $or: [{ userId: objectId }, { email: user.email }] })
+        .select("ticketNumber subject status createdAt")
+        .limit(50)
+        .lean() as unknown as Promise<
+        Array<{ ticketNumber: string; subject: string; status: string; createdAt: Date }>
+      >,
+      NotificationLog.find({ to: user.email })
+        .select("eventType channel status subject createdAt")
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean() as unknown as Promise<
+        Array<{
+          eventType: string;
+          channel: string;
+          status: string;
+          subject?: string;
+          createdAt: Date;
+        }>
+      >,
+      ReturnRequest.find({ userId: objectId })
+        .select("returnNumber status createdAt")
+        .limit(50)
+        .lean() as unknown as Promise<
+        Array<{ returnNumber?: string; status: string; createdAt: Date }>
+      >,
+      statsForUsers([objectId]),
+      segmentThresholds(),
+    ]);
   const statusEvents = orders.length
     ? ((await OrderTimeline.find({ orderNumber: { $in: orders.map((order) => order.orderNumber) } })
         .select("orderNumber toStatus createdAt note")
         .limit(300)
-        .lean()) as unknown as Array<{ orderNumber: string; toStatus: string; createdAt: Date; note?: string }>)
+        .lean()) as unknown as Array<{
+        orderNumber: string;
+        toStatus: string;
+        createdAt: Date;
+        note?: string;
+      }>)
     : [];
   const stats = statsMap.get(userId) ?? { lifetimeValue: 0, orderCount: 0 };
-  const timeline = ([
-    { at: user.createdAt ?? new Date(0), kind: "account", title: "Account created" },
-    ...orders.map((order) => ({
-      at: order.createdAt,
-      detail: `₹${order.totals?.grandTotal ?? 0} · ${order.status}`,
-      href: `/admin/orders?search=${order.orderNumber}`,
-      kind: "order" as const,
-      title: `Placed order ${order.orderNumber}`,
-    })),
-    ...statusEvents.map((event) => ({
-      at: event.createdAt,
-      detail: event.note,
-      kind: "order_status" as const,
-      title: `${event.orderNumber} → ${event.toStatus}`,
-    })),
-    ...reviews.map((review) => ({
-      at: review.createdAt,
-      detail: `${review.rating}★ · ${review.moderationStatus}`,
-      kind: "review" as const,
-      title: `Reviewed ${review.productId?.name ?? "a product"}`,
-    })),
-    ...tickets.map((ticket) => ({
-      at: ticket.createdAt,
-      detail: ticket.status,
-      href: `/admin/support?ticket=${ticket.ticketNumber}`,
-      kind: "ticket" as const,
-      title: `Support ticket ${ticket.ticketNumber}: ${ticket.subject}`,
-    })),
-    ...notifications.map((log) => ({
-      at: log.createdAt,
-      detail: `${log.channel} · ${log.status}`,
-      kind: "notification" as const,
-      title: log.subject ?? log.eventType,
-    })),
-    ...returns.map((request) => ({
-      at: request.createdAt,
-      detail: request.status,
-      kind: "return" as const,
-      title: `Return ${request.returnNumber ?? ""}`.trim(),
-    })),
-    ...(user.crm?.notes ?? []).map((note) => ({
-      at: note.createdAt,
-      detail: note.body,
-      kind: "note" as const,
-      title: "Internal note",
-    })),
-  ] as TimelineEvent[]).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  const timeline = (
+    [
+      { at: user.createdAt ?? new Date(0), kind: "account", title: "Account created" },
+      ...orders.map((order) => ({
+        at: order.createdAt,
+        detail: `₹${order.totals?.grandTotal ?? 0} · ${order.status}`,
+        href: `/admin/orders?search=${order.orderNumber}`,
+        kind: "order" as const,
+        title: `Placed order ${order.orderNumber}`,
+      })),
+      ...statusEvents.map((event) => ({
+        at: event.createdAt,
+        detail: event.note,
+        kind: "order_status" as const,
+        title: `${event.orderNumber} → ${event.toStatus}`,
+      })),
+      ...reviews.map((review) => ({
+        at: review.createdAt,
+        detail: `${review.rating}★ · ${review.moderationStatus}`,
+        kind: "review" as const,
+        title: `Reviewed ${review.productId?.name ?? "a product"}`,
+      })),
+      ...tickets.map((ticket) => ({
+        at: ticket.createdAt,
+        detail: ticket.status,
+        href: `/admin/support?ticket=${ticket.ticketNumber}`,
+        kind: "ticket" as const,
+        title: `Support ticket ${ticket.ticketNumber}: ${ticket.subject}`,
+      })),
+      ...notifications.map((log) => ({
+        at: log.createdAt,
+        detail: `${log.channel} · ${log.status}`,
+        kind: "notification" as const,
+        title: log.subject ?? log.eventType,
+      })),
+      ...returns.map((request) => ({
+        at: request.createdAt,
+        detail: request.status,
+        kind: "return" as const,
+        title: `Return ${request.returnNumber ?? ""}`.trim(),
+      })),
+      ...(user.crm?.notes ?? []).map((note) => ({
+        at: note.createdAt,
+        detail: note.body,
+        kind: "note" as const,
+        title: "Internal note",
+      })),
+    ] as TimelineEvent[]
+  ).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 
   return {
     customer: user,
@@ -305,7 +368,9 @@ export async function addCustomerNote(userId: string, body: string, authorId: st
 }
 
 export async function setCustomerTags(userId: string, tags: string[]) {
-  const normalized = [...new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))].slice(0, 30);
+  const normalized = [
+    ...new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean)),
+  ].slice(0, 30);
   const user = await User.findOneAndUpdate(
     { _id: userId, type: "customer" },
     { $set: { "crm.tags": normalized } },
@@ -330,7 +395,11 @@ type SegmentRules = {
 
 /** Translates custom segment rules (FR-CRM-05) into a customer query. */
 export function customSegmentQuery(rules: SegmentRules, now = new Date()) {
-  const query: Record<string, unknown> = { anonymizedAt: { $exists: false }, status: "active", type: "customer" };
+  const query: Record<string, unknown> = {
+    anonymizedAt: { $exists: false },
+    status: "active",
+    type: "customer",
+  };
   const orderCount: Record<string, number> = {};
   const spend: Record<string, number> = {};
 
@@ -341,10 +410,14 @@ export function customSegmentQuery(rules: SegmentRules, now = new Date()) {
   if (rules.maxSpend !== undefined) spend.$lte = rules.maxSpend;
   if (Object.keys(spend).length) query.lifetimeOrderValue = spend;
   if (rules.lastOrderWithinDays !== undefined) {
-    query["crm.lastOrderAt"] = { $gte: new Date(now.getTime() - rules.lastOrderWithinDays * 86_400_000) };
+    query["crm.lastOrderAt"] = {
+      $gte: new Date(now.getTime() - rules.lastOrderWithinDays * 86_400_000),
+    };
   }
   if (rules.noOrderForDays !== undefined) {
-    query["crm.lastOrderAt"] = { $lte: new Date(now.getTime() - rules.noOrderForDays * 86_400_000) };
+    query["crm.lastOrderAt"] = {
+      $lte: new Date(now.getTime() - rules.noOrderForDays * 86_400_000),
+    };
   }
   if (rules.customerType) query.customerType = rules.customerType;
   if (rules.tags?.length) query["crm.tags"] = { $all: rules.tags.map((tag) => tag.toLowerCase()) };
@@ -357,19 +430,30 @@ export async function previewCustomSegment(rules: SegmentRules) {
   const query = customSegmentQuery(rules);
   const [count, sample] = await Promise.all([
     User.countDocuments(query),
-    User.find(query).select("email firstName lastName lifetimeOrderValue crm.segment").limit(20).lean(),
+    User.find(query)
+      .select("email firstName lastName lifetimeOrderValue crm.segment")
+      .limit(20)
+      .lean(),
   ]);
   return { count, sample };
 }
 
-export async function saveCustomSegment(input: { name: string; description?: string; rules: SegmentRules }, createdBy: string) {
+export async function saveCustomSegment(
+  input: { name: string; description?: string; rules: SegmentRules },
+  createdBy: string,
+) {
   return CustomerSegment.create({ ...input, createdBy });
 }
 
 export async function listCustomSegments() {
-  const segments = (await CustomerSegment.find({}).sort({ createdAt: -1 }).lean()) as unknown as Array<{ rules: SegmentRules } & Record<string, unknown>>;
+  const segments = (await CustomerSegment.find({})
+    .sort({ createdAt: -1 })
+    .lean()) as unknown as Array<{ rules: SegmentRules } & Record<string, unknown>>;
   return Promise.all(
-    segments.map(async (segment) => ({ ...segment, size: await User.countDocuments(customSegmentQuery(segment.rules)) })),
+    segments.map(async (segment) => ({
+      ...segment,
+      size: await User.countDocuments(customSegmentQuery(segment.rules)),
+    })),
   );
 }
 

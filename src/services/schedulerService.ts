@@ -27,7 +27,11 @@ export function registerJob(definition: JobDefinition) {
 }
 
 export function listRegisteredJobs() {
-  return [...registry.values()].map(({ description, intervalMs, name }) => ({ description, intervalMs, name }));
+  return [...registry.values()].map(({ description, intervalMs, name }) => ({
+    description,
+    intervalMs,
+    name,
+  }));
 }
 
 async function acquireLease(name: string, ttlMs: number) {
@@ -88,7 +92,12 @@ export async function runJobOnce(name: string) {
       { name, owner },
       {
         $inc: { failureCount: 1 },
-        $set: { lastDurationMs: Date.now() - started, lastError: message.slice(0, 500), lastErrorAt: new Date(), lockedUntil: new Date() },
+        $set: {
+          lastDurationMs: Date.now() - started,
+          lastError: message.slice(0, 500),
+          lastErrorAt: new Date(),
+          lockedUntil: new Date(),
+        },
       },
     );
     throw error;
@@ -116,15 +125,22 @@ export function stopScheduler() {
 }
 
 export async function getJobStatuses() {
-  const locks = (await JobLock.find({}).lean()) as unknown as Array<Record<string, unknown> & { name: string }>;
+  const locks = (await JobLock.find({}).lean()) as unknown as Array<
+    Record<string, unknown> & { name: string }
+  >;
   return listRegisteredJobs().map((job) => {
     const lock = locks.find((item) => item.name === job.name);
     const lastFinishedAt = lock?.lastFinishedAt as Date | undefined;
-    const overdue = lastFinishedAt ? Date.now() - new Date(lastFinishedAt).getTime() > job.intervalMs * 3 : true;
+    const overdue = lastFinishedAt
+      ? Date.now() - new Date(lastFinishedAt).getTime() > job.intervalMs * 3
+      : true;
     return {
       ...job,
       failureCount: lock?.failureCount ?? 0,
-      healthy: !lock?.lastErrorAt || (lastFinishedAt !== undefined && new Date(lastFinishedAt) > new Date(lock.lastErrorAt as Date)),
+      healthy:
+        !lock?.lastErrorAt ||
+        (lastFinishedAt !== undefined &&
+          new Date(lastFinishedAt) > new Date(lock.lastErrorAt as Date)),
       lastDurationMs: lock?.lastDurationMs,
       lastError: lock?.lastError,
       lastErrorAt: lock?.lastErrorAt,

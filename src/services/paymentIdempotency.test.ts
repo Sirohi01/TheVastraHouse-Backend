@@ -19,7 +19,11 @@ import {
 
 type Session = InstanceType<typeof PaymentSession>;
 
-function setup(t: test.TestContext, sessionInput: Record<string, unknown>, orderInput: Record<string, unknown> = {}) {
+function setup(
+  t: test.TestContext,
+  sessionInput: Record<string, unknown>,
+  orderInput: Record<string, unknown> = {},
+) {
   env.RAZORPAY_KEY_SECRET = "idem_key_secret";
   env.RAZORPAY_WEBHOOK_SECRET = "idem_webhook_secret";
   const session = new PaymentSession({

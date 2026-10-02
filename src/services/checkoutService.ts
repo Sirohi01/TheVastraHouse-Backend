@@ -6,9 +6,19 @@ import { Cart } from "../models/Cart.js";
 import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
 import { User } from "../models/User.js";
-import { evaluateCoupon, redeemCoupon, reverseCouponRedemption, type CouponEvaluation } from "./couponService.js";
+import {
+  evaluateCoupon,
+  redeemCoupon,
+  reverseCouponRedemption,
+  type CouponEvaluation,
+} from "./couponService.js";
 import { assessOrderRisk } from "./fraudService.js";
-import { getGiftCardByCode, isGiftCardUsable, redeemGiftCardsForOrder, restoreGiftCardsForOrder } from "./giftCardService.js";
+import {
+  getGiftCardByCode,
+  isGiftCardUsable,
+  redeemGiftCardsForOrder,
+  restoreGiftCardsForOrder,
+} from "./giftCardService.js";
 import {
   createCreditTermsPayment,
   createManualPayment,
@@ -45,7 +55,11 @@ import {
   restoreRedeemedPoints,
   valueToPoints,
 } from "./rewardPointsService.js";
-import { getStoreCreditBalance, redeemStoreCredit, restoreStoreCredit } from "./storeCreditService.js";
+import {
+  getStoreCreditBalance,
+  redeemStoreCredit,
+  restoreStoreCredit,
+} from "./storeCreditService.js";
 
 export type CheckoutAddress = {
   fullName?: string;
@@ -346,7 +360,12 @@ export async function createOrderFromCheckout(input: CheckoutInput) {
 async function compensateRedemptions(
   input: Pick<CheckoutInput, "userId">,
   orderNumber: string,
-  completed: { couponRedemptionId?: unknown; giftCards: Array<{ code: string; amount: number }>; rewardPoints: number; storeCredit: number },
+  completed: {
+    couponRedemptionId?: unknown;
+    giftCards: Array<{ code: string; amount: number }>;
+    rewardPoints: number;
+    storeCredit: number;
+  },
 ) {
   if (completed.couponRedemptionId) {
     await reverseCouponRedemption(orderNumber);
@@ -358,7 +377,11 @@ async function compensateRedemptions(
     await restoreStoreCredit({ amount: completed.storeCredit, orderNumber, userId: input.userId });
   }
   if (input.userId && completed.rewardPoints > 0) {
-    await restoreRedeemedPoints({ orderNumber, points: completed.rewardPoints, userId: input.userId });
+    await restoreRedeemedPoints({
+      orderNumber,
+      points: completed.rewardPoints,
+      userId: input.userId,
+    });
   }
 }
 
@@ -418,7 +441,8 @@ async function calculateOrderTotals(
   }
 
   const items = [];
-  const couponLines: Array<{ productId: unknown; categoryIds: unknown[]; lineSubtotal: number }> = [];
+  const couponLines: Array<{ productId: unknown; categoryIds: unknown[]; lineSubtotal: number }> =
+    [];
   const taxBreakdown = new Map<number, { taxableAmount: number; gstAmount: number }>();
 
   for (const line of lines) {
@@ -639,7 +663,10 @@ async function resolveGiftCardRedemptions(
     const card = await getGiftCardByCode(snapshot.code);
 
     if (!isGiftCardUsable(card)) {
-      throw new AppError(`Gift card ${snapshot.code} is no longer valid. Remove it to continue.`, 409);
+      throw new AppError(
+        `Gift card ${snapshot.code} is no longer valid. Remove it to continue.`,
+        409,
+      );
     }
 
     // Never exceed the amount validated into the cart, the live balance, or what is payable.
@@ -782,7 +809,10 @@ async function loadProductForCheckout(
   );
 
   if (!variant) {
-    throw new AppError("A selected size/colour is no longer available. Please update your cart.", 409);
+    throw new AppError(
+      "A selected size/colour is no longer available. Please update your cart.",
+      409,
+    );
   }
 
   if (purchaseAsPreOrder || isPreOrderActive(variant.preOrder)) {

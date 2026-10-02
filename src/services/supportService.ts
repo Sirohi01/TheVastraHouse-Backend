@@ -2,7 +2,11 @@ import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { env } from "../config/env.js";
 import { AppError } from "../middleware/errorHandler.js";
-import { SupportTicket, type ticketCategories, type ticketStatuses } from "../models/SupportTicket.js";
+import {
+  SupportTicket,
+  type ticketCategories,
+  type ticketStatuses,
+} from "../models/SupportTicket.js";
 import { User } from "../models/User.js";
 import { buildPaginatedResult, type PaginationOptions } from "../utils/pagination.js";
 import { getRuntimeSetting } from "./runtimeSettingsService.js";
@@ -69,7 +73,8 @@ export async function createTicketFromContactForm(input: {
     variables: { name: input.name, ticketNumber: ticket.ticketNumber },
   });
 
-  const supportInbox = (await getRuntimeSetting("COMPANY_EMAIL")) || env.COMPANY_EMAIL || env.SMTP_FROM_EMAIL;
+  const supportInbox =
+    (await getRuntimeSetting("COMPANY_EMAIL")) || env.COMPANY_EMAIL || env.SMTP_FROM_EMAIL;
   if (supportInbox) {
     await enqueueNotification({
       channel: "email",
@@ -100,7 +105,12 @@ export async function listTickets(
   }
   if (filter.search) {
     const pattern = { $options: "i", $regex: filter.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") };
-    query.$or = [{ ticketNumber: pattern }, { email: pattern }, { subject: pattern }, { orderNumber: pattern }];
+    query.$or = [
+      { ticketNumber: pattern },
+      { email: pattern },
+      { subject: pattern },
+      { orderNumber: pattern },
+    ];
   }
 
   const [items, total, openCount, overdueCount] = await Promise.all([
@@ -125,7 +135,9 @@ export async function getTicket(ticketNumber: string, options: { customerEmail?:
     ...(options.customerEmail ? { email: options.customerEmail } : {}),
   })
     .populate("assignedTo", "email firstName lastName")
-    .lean()) as unknown as (Record<string, unknown> & { messages: Array<{ internal?: boolean }> }) | null;
+    .lean()) as unknown as
+    | (Record<string, unknown> & { messages: Array<{ internal?: boolean }> })
+    | null;
 
   if (!ticket) {
     throw new AppError("Ticket not found", 404);
@@ -133,7 +145,12 @@ export async function getTicket(ticketNumber: string, options: { customerEmail?:
 
   if (options.customerEmail) {
     // Internal agent notes never reach the customer.
-    return { ...ticket, assignedTo: undefined, ipAddress: undefined, messages: ticket.messages.filter((message) => !message.internal) };
+    return {
+      ...ticket,
+      assignedTo: undefined,
+      ipAddress: undefined,
+      messages: ticket.messages.filter((message) => !message.internal),
+    };
   }
 
   return ticket;
@@ -201,7 +218,12 @@ export async function replyToTicket(input: {
 
 export async function updateTicket(
   ticketNumber: string,
-  input: { status?: TicketStatus; priority?: Priority; assignedTo?: string | null; category?: TicketCategory },
+  input: {
+    status?: TicketStatus;
+    priority?: Priority;
+    assignedTo?: string | null;
+    category?: TicketCategory;
+  },
 ) {
   const ticket = await SupportTicket.findOne({ ticketNumber: ticketNumber.toUpperCase() });
 

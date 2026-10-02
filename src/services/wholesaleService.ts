@@ -30,7 +30,12 @@ export async function getWholesaleAccount(userId?: string): Promise<WholesaleAcc
     customerType?: string;
     wholesaleStatus?: string;
     priceListCode?: string;
-    wholesaleProfile?: { paymentTerms?: WholesalePaymentTerms; creditLimit?: number; gstin?: string; businessName?: string };
+    wholesaleProfile?: {
+      paymentTerms?: WholesalePaymentTerms;
+      creditLimit?: number;
+      gstin?: string;
+      businessName?: string;
+    };
   } | null;
 
   if (!user || user.customerType !== "wholesale" || user.wholesaleStatus !== "approved") {
@@ -59,7 +64,8 @@ export async function applyForWholesale(
 
   const user = await User.findById(userId);
   if (!user || user.type !== "customer") throw new AppError("User not found", 404);
-  if (user.wholesaleStatus === "approved") throw new AppError("Your wholesale account is already active", 409);
+  if (user.wholesaleStatus === "approved")
+    throw new AppError("Your wholesale account is already active", 409);
 
   user.wholesaleStatus = "pending";
   user.set("wholesaleProfile", {
@@ -75,11 +81,19 @@ export async function applyForWholesale(
   return { wholesaleStatus: user.wholesaleStatus };
 }
 
-export async function listWholesaleAccounts(filter: { status?: string }, pagination: PaginationOptions) {
-  const query: Record<string, unknown> = { type: "customer", wholesaleStatus: filter.status ?? { $ne: "none" } };
+export async function listWholesaleAccounts(
+  filter: { status?: string },
+  pagination: PaginationOptions,
+) {
+  const query: Record<string, unknown> = {
+    type: "customer",
+    wholesaleStatus: filter.status ?? { $ne: "none" },
+  };
   const [items, total] = await Promise.all([
     User.find(query)
-      .select("email firstName lastName phone customerType wholesaleStatus priceListCode wholesaleProfile lifetimeOrderValue createdAt")
+      .select(
+        "email firstName lastName phone customerType wholesaleStatus priceListCode wholesaleProfile lifetimeOrderValue createdAt",
+      )
       .sort({ "wholesaleProfile.appliedAt": -1 })
       .skip(pagination.skip)
       .limit(pagination.limit)
@@ -108,7 +122,9 @@ export async function reviewWholesaleApplication(input: {
     user.customerType = "retail";
     user.priceListCode = undefined;
   } else {
-    const priceListCode = (input.priceListCode || user.priceListCode || "WHOLESALE").trim().toUpperCase();
+    const priceListCode = (input.priceListCode || user.priceListCode || "WHOLESALE")
+      .trim()
+      .toUpperCase();
     const hasPrices = await Product.exists({ "variants.priceTiers.priceListCode": priceListCode });
     if (!hasPrices) {
       throw new AppError(`No products have prices for price list ${priceListCode} yet`, 400);
@@ -116,8 +132,14 @@ export async function reviewWholesaleApplication(input: {
     user.wholesaleStatus = "approved";
     user.customerType = "wholesale";
     user.priceListCode = priceListCode;
-    user.set("wholesaleProfile.paymentTerms", input.paymentTerms ?? user.wholesaleProfile?.paymentTerms ?? "prepaid");
-    user.set("wholesaleProfile.creditLimit", input.creditLimit ?? user.wholesaleProfile?.creditLimit ?? 0);
+    user.set(
+      "wholesaleProfile.paymentTerms",
+      input.paymentTerms ?? user.wholesaleProfile?.paymentTerms ?? "prepaid",
+    );
+    user.set(
+      "wholesaleProfile.creditLimit",
+      input.creditLimit ?? user.wholesaleProfile?.creditLimit ?? 0,
+    );
   }
 
   user.set("wholesaleProfile.reviewedAt", new Date());
@@ -155,7 +177,9 @@ export async function reviewWholesaleApplication(input: {
 }
 
 /** Enforces per-style minimum order quantities for wholesale carts. */
-export async function assertWholesaleMinimums(items: Array<{ productId: unknown; quantity: number; productName: string }>) {
+export async function assertWholesaleMinimums(
+  items: Array<{ productId: unknown; quantity: number; productName: string }>,
+) {
   const totals = new Map<string, { quantity: number; name: string }>();
   for (const item of items) {
     const key = String(item.productId);

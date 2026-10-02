@@ -5,7 +5,12 @@ import { AppError } from "../middleware/errorHandler.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { User } from "../models/User.js";
-import { addAddress, deleteAddress, listAddresses, updateAddress } from "../services/addressService.js";
+import {
+  addAddress,
+  deleteAddress,
+  listAddresses,
+  updateAddress,
+} from "../services/addressService.js";
 import { listUserGiftCards, startGiftCardPurchase } from "../services/giftCardService.js";
 import { getLoyaltyTier } from "../services/loyaltyTierService.js";
 import {
@@ -49,7 +54,10 @@ const addressSchema = z
     region: z.string().trim().min(2).max(100),
     postalCode: z.string().trim().min(3).max(12),
     countryCode: z.string().trim().length(2).default("IN"),
-    phone: z.string().trim().regex(/^\+?[0-9\s-]{8,16}$/, "Enter a valid phone number"),
+    phone: z
+      .string()
+      .trim()
+      .regex(/^\+?[0-9\s-]{8,16}$/, "Enter a valid phone number"),
     isDefaultShipping: z.boolean().optional(),
     isDefaultBilling: z.boolean().optional(),
   })
@@ -58,8 +66,10 @@ const addressSchema = z
 accountRouter.get("/overview", async (req, res, next) => {
   try {
     const user = (await User.findById(req.user!.id)
-      .select("email firstName lastName phone rewardPointsBalance storeCreditBalance lifetimeOrderValue customerType wholesaleStatus crm.orderCount createdAt emailVerifiedAt")
-      .lean()) as unknown as Record<string, unknown> & { email: string } | null;
+      .select(
+        "email firstName lastName phone rewardPointsBalance storeCreditBalance lifetimeOrderValue customerType wholesaleStatus crm.orderCount createdAt emailVerifiedAt",
+      )
+      .lean()) as unknown as (Record<string, unknown> & { email: string }) | null;
     if (!user) throw new AppError("User not found", 404);
 
     const [tier, giftCards, addresses] = await Promise.all([
@@ -71,8 +81,14 @@ accountRouter.get("/overview", async (req, res, next) => {
     res.json({
       addressesCount: addresses.length,
       customer: user,
-      giftCardBalance: (giftCards as unknown as Array<{ status: string; balance: number; recipientEmail?: string }>)
-        .filter((card) => card.status === "active" && (!card.recipientEmail || card.recipientEmail === user.email))
+      giftCardBalance: (
+        giftCards as unknown as Array<{ status: string; balance: number; recipientEmail?: string }>
+      )
+        .filter(
+          (card) =>
+            card.status === "active" &&
+            (!card.recipientEmail || card.recipientEmail === user.email),
+        )
         .reduce((total, card) => total + card.balance, 0),
       tier,
     });
@@ -90,13 +106,17 @@ accountRouter.get("/addresses", async (req, res, next) => {
   }
 });
 
-accountRouter.post("/addresses", validateRequest({ body: addressSchema }), async (req, res, next) => {
-  try {
-    res.status(201).json({ addresses: await addAddress(req.user!.id, req.body) });
-  } catch (error) {
-    next(error);
-  }
-});
+accountRouter.post(
+  "/addresses",
+  validateRequest({ body: addressSchema }),
+  async (req, res, next) => {
+    try {
+      res.status(201).json({ addresses: await addAddress(req.user!.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 accountRouter.patch(
   "/addresses/:id",
@@ -125,7 +145,9 @@ accountRouter.delete(
 // ---------- Loyalty, credit, gift cards, referrals ----------
 accountRouter.get("/rewards", async (req, res, next) => {
   try {
-    const user = (await User.findById(req.user!.id).select("email rewardPointsBalance storeCreditBalance").lean()) as unknown as {
+    const user = (await User.findById(req.user!.id)
+      .select("email rewardPointsBalance storeCreditBalance")
+      .lean()) as unknown as {
       email: string;
       rewardPointsBalance?: number;
       storeCreditBalance?: number;
@@ -173,9 +195,17 @@ accountRouter.post(
   }),
   async (req, res, next) => {
     try {
-      const user = (await User.findById(req.user!.id).select("email").lean()) as unknown as { email: string } | null;
+      const user = (await User.findById(req.user!.id).select("email").lean()) as unknown as {
+        email: string;
+      } | null;
       if (!user) throw new AppError("User not found", 404);
-      res.status(201).json(await startGiftCardPurchase({ ...req.body, purchaserEmail: user.email, userId: req.user!.id }));
+      res.status(201).json(
+        await startGiftCardPurchase({
+          ...req.body,
+          purchaserEmail: user.email,
+          userId: req.user!.id,
+        }),
+      );
     } catch (error) {
       next(error);
     }
@@ -191,15 +221,23 @@ accountRouter.post(
       .object({
         businessName: z.string().trim().min(2).max(160),
         gstin: z.string().trim().max(15).optional().or(z.literal("")),
-        contactPhone: z.string().trim().regex(/^\+?[0-9\s-]{8,16}$/),
+        contactPhone: z
+          .string()
+          .trim()
+          .regex(/^\+?[0-9\s-]{8,16}$/),
         notes: z.string().trim().max(1000).optional(),
       })
       .strict(),
   }),
   async (req, res, next) => {
     try {
-      const result = await applyForWholesale(req.user!.id, { ...req.body, gstin: req.body.gstin || undefined });
-      const user = (await User.findById(req.user!.id).select("email firstName").lean()) as unknown as { email: string; firstName?: string };
+      const result = await applyForWholesale(req.user!.id, {
+        ...req.body,
+        gstin: req.body.gstin || undefined,
+      });
+      const user = (await User.findById(req.user!.id)
+        .select("email firstName")
+        .lean()) as unknown as { email: string; firstName?: string };
       await createTicketFromContactForm({
         category: "wholesale",
         email: user.email,
@@ -220,7 +258,9 @@ accountRouter.post(
 // ---------- Support tickets ----------
 accountRouter.get("/support", async (req, res, next) => {
   try {
-    const user = (await User.findById(req.user!.id).select("email").lean()) as unknown as { email: string };
+    const user = (await User.findById(req.user!.id).select("email").lean()) as unknown as {
+      email: string;
+    };
     res.json({ tickets: await listCustomerTickets(user.email) });
   } catch (error) {
     next(error);
@@ -229,8 +269,12 @@ accountRouter.get("/support", async (req, res, next) => {
 
 accountRouter.get("/support/:ticketNumber", async (req, res, next) => {
   try {
-    const user = (await User.findById(req.user!.id).select("email").lean()) as unknown as { email: string };
-    res.json({ ticket: await getTicket(String(req.params.ticketNumber), { customerEmail: user.email }) });
+    const user = (await User.findById(req.user!.id).select("email").lean()) as unknown as {
+      email: string;
+    };
+    res.json({
+      ticket: await getTicket(String(req.params.ticketNumber), { customerEmail: user.email }),
+    });
   } catch (error) {
     next(error);
   }
@@ -242,9 +286,17 @@ accountRouter.post(
   validateRequest({ body: z.object({ body: z.string().trim().min(2).max(5000) }).strict() }),
   async (req, res, next) => {
     try {
-      const user = (await User.findById(req.user!.id).select("email").lean()) as unknown as { email: string };
-      await replyToTicket({ body: req.body.body, customerEmail: user.email, ticketNumber: String(req.params.ticketNumber) });
-      res.json({ ticket: await getTicket(String(req.params.ticketNumber), { customerEmail: user.email }) });
+      const user = (await User.findById(req.user!.id).select("email").lean()) as unknown as {
+        email: string;
+      };
+      await replyToTicket({
+        body: req.body.body,
+        customerEmail: user.email,
+        ticketNumber: String(req.params.ticketNumber),
+      });
+      res.json({
+        ticket: await getTicket(String(req.params.ticketNumber), { customerEmail: user.email }),
+      });
     } catch (error) {
       next(error);
     }
@@ -276,7 +328,10 @@ accountRouter.post(
 accountRouter.get("/privacy/export/:requestNumber", async (req, res, next) => {
   try {
     const data = await downloadExport(req.user!.id, String(req.params.requestNumber));
-    res.setHeader("Content-Disposition", `attachment; filename="vastra-house-data-${String(req.params.requestNumber)}.json"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="vastra-house-data-${String(req.params.requestNumber)}.json"`,
+    );
     res.json(data);
   } catch (error) {
     next(error);
@@ -287,11 +342,18 @@ accountRouter.post(
   "/privacy/delete",
   rateLimit({ keyPrefix: "privacy-delete", max: 3, windowMs: 24 * 60 * 60 * 1000 }),
   validateRequest({
-    body: z.object({ reason: z.string().trim().max(1000).optional(), stepUpToken: z.string().min(20).max(200) }).strict(),
+    body: z
+      .object({
+        reason: z.string().trim().max(1000).optional(),
+        stepUpToken: z.string().min(20).max(200),
+      })
+      .strict(),
   }),
   async (req, res, next) => {
     try {
-      res.status(201).json(await requestAccountDeletion(req.user!.id, req.body.reason, req.body.stepUpToken));
+      res
+        .status(201)
+        .json(await requestAccountDeletion(req.user!.id, req.body.reason, req.body.stepUpToken));
     } catch (error) {
       next(error);
     }

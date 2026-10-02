@@ -40,7 +40,10 @@ export async function submitReview(input: { slug: string; userId: string; review
     .lean();
 
   if (existing) {
-    throw new AppError("You have already reviewed this product. Edit your existing review instead.", 409);
+    throw new AppError(
+      "You have already reviewed this product. Edit your existing review instead.",
+      409,
+    );
   }
 
   const [user, purchase, photos] = await Promise.all([
@@ -73,7 +76,11 @@ export async function submitReview(input: { slug: string; userId: string; review
 }
 
 /** Customers may edit their review; an edit sends it back through moderation. */
-export async function updateOwnReview(input: { reviewId: string; userId: string; review: ReviewInput }) {
+export async function updateOwnReview(input: {
+  reviewId: string;
+  userId: string;
+  review: ReviewInput;
+}) {
   const review = await ProductReview.findOne({
     _id: input.reviewId,
     status: { $ne: "deleted" },
@@ -111,7 +118,11 @@ export async function listOwnReviews(userId: string) {
 
 export async function listApprovedReviews(slug: string, pagination: PaginationOptions) {
   const product = await findActiveProduct(slug);
-  const filter = { moderationStatus: "approved", productId: product._id, status: { $ne: "deleted" } };
+  const filter = {
+    moderationStatus: "approved",
+    productId: product._id,
+    status: { $ne: "deleted" },
+  };
   const [reviews, total, distribution] = await Promise.all([
     ProductReview.find(filter)
       .select("rating title body guestName photos verifiedPurchase createdAt")
@@ -125,7 +136,10 @@ export async function listApprovedReviews(slug: string, pagination: PaginationOp
       { $group: { _id: "$rating", count: { $sum: 1 } } },
     ]) as Promise<Array<{ _id: number; count: number }>>,
   ]);
-  const counts = Object.fromEntries([1, 2, 3, 4, 5].map((star) => [star, 0])) as Record<number, number>;
+  const counts = Object.fromEntries([1, 2, 3, 4, 5].map((star) => [star, 0])) as Record<
+    number,
+    number
+  >;
   let sum = 0;
   for (const row of distribution) {
     counts[row._id] = row.count;

@@ -561,7 +561,10 @@ export async function emitAbandonedCartEvents(now = new Date()) {
     if (cart.userId) {
       const user = (await User.findById(cart.userId)
         .select("email notificationPreferences.marketingEmail")
-        .lean()) as { email?: string; notificationPreferences?: { marketingEmail?: boolean } } | null;
+        .lean()) as {
+        email?: string;
+        notificationPreferences?: { marketingEmail?: boolean };
+      } | null;
       email = user?.notificationPreferences?.marketingEmail ? user.email : undefined;
     } else if (cart.marketingConsent && cart.contactEmail) {
       email = cart.contactEmail;

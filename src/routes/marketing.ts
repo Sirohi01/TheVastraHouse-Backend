@@ -5,8 +5,17 @@ import { AppError } from "../middleware/errorHandler.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { Coupon, CouponRedemption } from "../models/Coupon.js";
 import { writeAuditLog } from "../services/auditLogService.js";
-import { deleteCustomSegment, listCustomSegments, previewCustomSegment, saveCustomSegment } from "../services/crmService.js";
-import { exportNewsletterCsv, listBackInStockDemand, listNewsletterSubscribers } from "../services/engagementService.js";
+import {
+  deleteCustomSegment,
+  listCustomSegments,
+  previewCustomSegment,
+  saveCustomSegment,
+} from "../services/crmService.js";
+import {
+  exportNewsletterCsv,
+  listBackInStockDemand,
+  listNewsletterSubscribers,
+} from "../services/engagementService.js";
 import {
   cancelCampaign,
   createCampaign,
@@ -61,7 +70,9 @@ const couponSchema = z
   .refine((value) => value.type !== "percentage" || (value.value > 0 && value.value <= 100), {
     message: "Percentage coupons need a value between 1 and 100",
   })
-  .refine((value) => value.type !== "fixed" || value.value > 0, { message: "Fixed coupons need an amount" })
+  .refine((value) => value.type !== "fixed" || value.value > 0, {
+    message: "Fixed coupons need an amount",
+  })
   .refine((value) => !value.startsAt || !value.endsAt || value.startsAt < value.endsAt, {
     message: "End date must be after the start date",
   });
@@ -71,10 +82,17 @@ marketingRouter.get("/coupons", read, async (req, res, next) => {
     const pagination = parsePagination(req.query);
     const query: Record<string, unknown> = { status: { $ne: "deleted" } };
     if (typeof req.query.search === "string" && req.query.search) {
-      query.code = { $options: "i", $regex: req.query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") };
+      query.code = {
+        $options: "i",
+        $regex: req.query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      };
     }
     const [items, total] = await Promise.all([
-      Coupon.find(query).sort({ createdAt: -1 }).skip(pagination.skip).limit(pagination.limit).lean(),
+      Coupon.find(query)
+        .sort({ createdAt: -1 })
+        .skip(pagination.skip)
+        .limit(pagination.limit)
+        .lean(),
       Coupon.countDocuments(query),
     ]);
     res.json(buildPaginatedResult(items, total, pagination));
@@ -83,32 +101,45 @@ marketingRouter.get("/coupons", read, async (req, res, next) => {
   }
 });
 
-marketingRouter.get("/coupons/:id/redemptions", read, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    res.json({
-      redemptions: await CouponRedemption.find({ couponId: req.params.id }).sort({ createdAt: -1 }).limit(200).lean(),
-    });
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.get(
+  "/coupons/:id/redemptions",
+  read,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      res.json({
+        redemptions: await CouponRedemption.find({ couponId: req.params.id })
+          .sort({ createdAt: -1 })
+          .limit(200)
+          .lean(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-marketingRouter.post("/coupons", manage, validateRequest({ body: couponSchema }), async (req, res, next) => {
-  try {
-    const code = req.body.code.toUpperCase();
-    if (await Coupon.exists({ code })) throw new AppError(`Coupon ${code} already exists`, 409);
-    const coupon = await Coupon.create({ ...req.body, code, createdBy: req.user!.id });
-    await writeAuditLog({
-      action: "create",
-      actor: { actorId: req.user!.id as never, actorType: "admin" },
-      after: coupon.toObject(),
-      entity: { displayId: code, id: coupon._id, type: "coupon" },
-    });
-    res.status(201).json({ coupon });
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.post(
+  "/coupons",
+  manage,
+  validateRequest({ body: couponSchema }),
+  async (req, res, next) => {
+    try {
+      const code = req.body.code.toUpperCase();
+      if (await Coupon.exists({ code })) throw new AppError(`Coupon ${code} already exists`, 409);
+      const coupon = await Coupon.create({ ...req.body, code, createdBy: req.user!.id });
+      await writeAuditLog({
+        action: "create",
+        actor: { actorId: req.user!.id as never, actorType: "admin" },
+        after: coupon.toObject(),
+        entity: { displayId: code, id: coupon._id, type: "coupon" },
+      });
+      res.status(201).json({ coupon });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 marketingRouter.patch(
   "/coupons/:id",
@@ -121,7 +152,11 @@ marketingRouter.patch(
         throw new AppError(`Coupon ${code} already exists`, 409);
       }
       const before = await Coupon.findById(req.params.id).lean();
-      const coupon = await Coupon.findByIdAndUpdate(req.params.id, { $set: { ...req.body, code } }, { new: true, runValidators: true });
+      const coupon = await Coupon.findByIdAndUpdate(
+        req.params.id,
+        { $set: { ...req.body, code } },
+        { new: true, runValidators: true },
+      );
       if (!coupon) throw new AppError("Coupon not found", 404);
       await writeAuditLog({
         action: "update",
@@ -137,19 +172,24 @@ marketingRouter.patch(
   },
 );
 
-marketingRouter.delete("/coupons/:id", manage, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    const coupon = await Coupon.findByIdAndUpdate(
-      req.params.id,
-      { $set: { active: false, deletedAt: new Date(), status: "deleted" } },
-      { new: true },
-    );
-    if (!coupon) throw new AppError("Coupon not found", 404);
-    res.json({ deleted: true });
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.delete(
+  "/coupons/:id",
+  manage,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      const coupon = await Coupon.findByIdAndUpdate(
+        req.params.id,
+        { $set: { active: false, deletedAt: new Date(), status: "deleted" } },
+        { new: true },
+      );
+      if (!coupon) throw new AppError("Coupon not found", 404);
+      res.json({ deleted: true });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // ---------------- Campaigns ----------------
 
@@ -173,7 +213,11 @@ const campaignSchema = z
         enabled: z.boolean().default(false),
         title: z.string().trim().max(120).optional(),
         text: z.string().trim().max(300).optional(),
-        href: z.string().trim().regex(/^\/[^\s]*$/, "Banner links must be site paths").optional(),
+        href: z
+          .string()
+          .trim()
+          .regex(/^\/[^\s]*$/, "Banner links must be site paths")
+          .optional(),
         media: z.record(z.unknown()).optional(),
       })
       .strict()
@@ -193,13 +237,18 @@ marketingRouter.get("/campaigns", read, async (_req, res, next) => {
   }
 });
 
-marketingRouter.post("/campaigns", manage, validateRequest({ body: campaignSchema }), async (req, res, next) => {
-  try {
-    res.status(201).json({ campaign: await createCampaign(req.body, req.user!.id) });
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.post(
+  "/campaigns",
+  manage,
+  validateRequest({ body: campaignSchema }),
+  async (req, res, next) => {
+    try {
+      res.status(201).json({ campaign: await createCampaign(req.body, req.user!.id) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 marketingRouter.patch(
   "/campaigns/:id",
@@ -214,29 +263,44 @@ marketingRouter.patch(
   },
 );
 
-marketingRouter.get("/campaigns/:id/audience", read, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    res.json(await previewCampaignAudience(String(req.params.id)));
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.get(
+  "/campaigns/:id/audience",
+  read,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      res.json(await previewCampaignAudience(String(req.params.id)));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-marketingRouter.post("/campaigns/:id/send", manage, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    res.json({ campaign: await sendCampaign(String(req.params.id)) });
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.post(
+  "/campaigns/:id/send",
+  manage,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      res.json({ campaign: await sendCampaign(String(req.params.id)) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-marketingRouter.post("/campaigns/:id/cancel", manage, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    res.json({ campaign: await cancelCampaign(String(req.params.id)) });
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.post(
+  "/campaigns/:id/cancel",
+  manage,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      res.json({ campaign: await cancelCampaign(String(req.params.id)) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // ---------------- Automations ----------------
 
@@ -252,11 +316,19 @@ marketingRouter.patch(
   "/automations/:key",
   manage,
   validateRequest({
-    params: z.object({ key: z.enum(["abandoned_cart", "win_back", "review_request", "welcome", "back_in_stock"]) }).strict(),
+    params: z
+      .object({
+        key: z.enum(["abandoned_cart", "win_back", "review_request", "welcome", "back_in_stock"]),
+      })
+      .strict(),
     body: z
       .object({
         enabled: z.boolean().optional(),
-        delayHours: z.coerce.number().min(0).max(24 * 60).optional(),
+        delayHours: z.coerce
+          .number()
+          .min(0)
+          .max(24 * 60)
+          .optional(),
         couponCode: z.string().trim().max(30).nullable().optional(),
       })
       .strict(),
@@ -265,7 +337,12 @@ marketingRouter.patch(
     try {
       res.json({
         automation: await updateAutomationSetting(
-          req.params.key as "abandoned_cart" | "win_back" | "review_request" | "welcome" | "back_in_stock",
+          req.params.key as
+            | "abandoned_cart"
+            | "win_back"
+            | "review_request"
+            | "welcome"
+            | "back_in_stock",
           req.body,
         ),
       });
@@ -299,19 +376,30 @@ marketingRouter.get("/segments", read, async (_req, res, next) => {
   }
 });
 
-marketingRouter.post("/segments/preview", read, validateRequest({ body: z.object({ rules: rulesSchema }).strict() }), async (req, res, next) => {
-  try {
-    res.json(await previewCustomSegment(req.body.rules));
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.post(
+  "/segments/preview",
+  read,
+  validateRequest({ body: z.object({ rules: rulesSchema }).strict() }),
+  async (req, res, next) => {
+    try {
+      res.json(await previewCustomSegment(req.body.rules));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 marketingRouter.post(
   "/segments",
   manage,
   validateRequest({
-    body: z.object({ name: z.string().trim().min(2).max(80), description: z.string().trim().max(300).optional(), rules: rulesSchema }).strict(),
+    body: z
+      .object({
+        name: z.string().trim().min(2).max(80),
+        description: z.string().trim().max(300).optional(),
+        rules: rulesSchema,
+      })
+      .strict(),
   }),
   async (req, res, next) => {
     try {
@@ -322,14 +410,19 @@ marketingRouter.post(
   },
 );
 
-marketingRouter.delete("/segments/:id", manage, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    await deleteCustomSegment(String(req.params.id));
-    res.json({ deleted: true });
-  } catch (error) {
-    next(error);
-  }
-});
+marketingRouter.delete(
+  "/segments/:id",
+  manage,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      await deleteCustomSegment(String(req.params.id));
+      res.json({ deleted: true });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // ---------------- Newsletter & demand ----------------
 

@@ -48,7 +48,10 @@ export async function assessOrderRisk(input: {
       score += 40;
     }
 
-    const sessionIds = await PaymentSession.find({ ...identity, createdAt: { $gte: since } }).distinct("_id");
+    const sessionIds = await PaymentSession.find({
+      ...identity,
+      createdAt: { $gte: since },
+    }).distinct("_id");
     const failedPayments = sessionIds.length
       ? await PaymentHistory.countDocuments({
           createdAt: { $gte: since },

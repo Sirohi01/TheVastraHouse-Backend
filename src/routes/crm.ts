@@ -51,21 +51,35 @@ crmRouter.get("/customers", readCustomers, async (req, res, next) => {
   }
 });
 
-crmRouter.get("/customers/:id", readCustomers, validateRequest({ params: z.object({ id: objectId }).strict() }), async (req, res, next) => {
-  try {
-    res.json(await getCustomerProfile(String(req.params.id)));
-  } catch (error) {
-    next(error);
-  }
-});
+crmRouter.get(
+  "/customers/:id",
+  readCustomers,
+  validateRequest({ params: z.object({ id: objectId }).strict() }),
+  async (req, res, next) => {
+    try {
+      res.json(await getCustomerProfile(String(req.params.id)));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 crmRouter.post(
   "/customers/:id/notes",
-  requireAnyPermission({ action: "manage", module: "crm" }, { action: "manage", module: "customers" }, { action: "manage", module: "support" }),
-  validateRequest({ params: z.object({ id: objectId }).strict(), body: z.object({ body: z.string().trim().min(2).max(2000) }).strict() }),
+  requireAnyPermission(
+    { action: "manage", module: "crm" },
+    { action: "manage", module: "customers" },
+    { action: "manage", module: "support" },
+  ),
+  validateRequest({
+    params: z.object({ id: objectId }).strict(),
+    body: z.object({ body: z.string().trim().min(2).max(2000) }).strict(),
+  }),
   async (req, res, next) => {
     try {
-      res.status(201).json({ crm: await addCustomerNote(String(req.params.id), req.body.body, req.user!.id) });
+      res
+        .status(201)
+        .json({ crm: await addCustomerNote(String(req.params.id), req.body.body, req.user!.id) });
     } catch (error) {
       next(error);
     }
@@ -128,7 +142,11 @@ crmRouter.post(
   }),
   async (req, res, next) => {
     try {
-      const user = await reviewWholesaleApplication({ ...req.body, adminUserId: req.user!.id, userId: String(req.params.id) });
+      const user = await reviewWholesaleApplication({
+        ...req.body,
+        adminUserId: req.user!.id,
+        userId: String(req.params.id),
+      });
       res.json({ wholesaleStatus: user.wholesaleStatus, priceListCode: user.priceListCode });
     } catch (error) {
       next(error);
@@ -143,7 +161,12 @@ crmRouter.get("/tickets", support, async (req, res, next) => {
     const q = req.query as Record<string, string | undefined>;
     res.json(
       await listTickets(
-        { assignedTo: q.assignedTo === "me" ? req.user!.id : q.assignedTo, overdue: q.overdue === "true", search: q.search, status: q.status },
+        {
+          assignedTo: q.assignedTo === "me" ? req.user!.id : q.assignedTo,
+          overdue: q.overdue === "true",
+          search: q.search,
+          status: q.status,
+        },
         parsePagination(req.query),
       ),
     );
@@ -174,7 +197,11 @@ crmRouter.post(
   }),
   async (req, res, next) => {
     try {
-      await replyToTicket({ ...req.body, agentId: req.user!.id, ticketNumber: String(req.params.ticketNumber) });
+      await replyToTicket({
+        ...req.body,
+        agentId: req.user!.id,
+        ticketNumber: String(req.params.ticketNumber),
+      });
       res.json({ ticket: await getTicket(String(req.params.ticketNumber)) });
     } catch (error) {
       next(error);
@@ -210,7 +237,9 @@ crmRouter.patch(
 crmRouter.get("/privacy-requests", manageCustomers, async (req, res, next) => {
   try {
     const q = req.query as Record<string, string | undefined>;
-    res.json(await listPrivacyRequests({ status: q.status, type: q.type }, parsePagination(req.query)));
+    res.json(
+      await listPrivacyRequests({ status: q.status, type: q.type }, parsePagination(req.query)),
+    );
   } catch (error) {
     next(error);
   }
@@ -220,7 +249,12 @@ crmRouter.post(
   "/privacy-requests/:requestNumber/process",
   requirePermission({ action: "manage", module: "users" }),
   validateRequest({
-    body: z.object({ decision: z.enum(["approve", "reject"]), note: z.string().trim().max(2000).optional() }).strict(),
+    body: z
+      .object({
+        decision: z.enum(["approve", "reject"]),
+        note: z.string().trim().max(2000).optional(),
+      })
+      .strict(),
   }),
   async (req, res, next) => {
     try {

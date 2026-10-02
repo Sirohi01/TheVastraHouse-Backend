@@ -36,7 +36,10 @@ adminRouter.get(
     try {
       const now = new Date();
       // Selectable reporting window (FR-RPT-01); defaults to 30 days.
-      const rangeDays = Math.min(Math.max(Number(req.query.range) || DASHBOARD_WINDOW_DAYS, 1), 365);
+      const rangeDays = Math.min(
+        Math.max(Number(req.query.range) || DASHBOARD_WINDOW_DAYS, 1),
+        365,
+      );
       const trendDays = Math.min(Math.max(rangeDays, TREND_WINDOW_DAYS), 90);
       const windowStart = new Date(now.getTime() - rangeDays * 86_400_000);
       const trendStart = new Date(now.getTime() - (trendDays - 1) * 86_400_000);
@@ -291,7 +294,12 @@ adminRouter.get(
         charts: {
           rangeDays,
           sessions,
-          conversionRate: sessions ? paymentMethodRows.reduce((sum: number, row: { count: number }) => sum + row.count, 0) / sessions : 0,
+          conversionRate: sessions
+            ? paymentMethodRows.reduce(
+                (sum: number, row: { count: number }) => sum + row.count,
+                0,
+              ) / sessions
+            : 0,
           newCustomers,
           totalCustomers,
           sessionsBySource: visitRows.map((row) => ({ sessions: row.sessions, source: row._id })),

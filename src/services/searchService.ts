@@ -90,7 +90,9 @@ export function parseSynonymGroups(groups: string[]): Map<string, string[]> {
       .map((term) => term.trim().toLowerCase())
       .filter(Boolean);
     for (const term of terms) {
-      map.set(term, [...new Set([...(map.get(term) ?? []), ...terms.filter((item) => item !== term)])]);
+      map.set(term, [
+        ...new Set([...(map.get(term) ?? []), ...terms.filter((item) => item !== term)]),
+      ]);
     }
   }
 
@@ -100,11 +102,19 @@ export function parseSynonymGroups(groups: string[]): Map<string, string[]> {
 async function buildIndex(): Promise<IndexState> {
   const [products, categories, collections, tags, settings] = await Promise.all([
     Product.find({ active: true, status: { $ne: "deleted" } })
-      .select("name slug description fabricDetails categoryIds collectionIds tagIds variants.sku computedBadges createdAt")
+      .select(
+        "name slug description fabricDetails categoryIds collectionIds tagIds variants.sku computedBadges createdAt",
+      )
       .lean() as unknown as Promise<Array<Record<string, unknown>>>,
-    Category.find({ status: { $ne: "deleted" } }).select("name").lean(),
-    Collection.find({ status: { $ne: "deleted" } }).select("name").lean(),
-    Tag.find({ status: { $ne: "deleted" } }).select("name").lean(),
+    Category.find({ status: { $ne: "deleted" } })
+      .select("name")
+      .lean(),
+    Collection.find({ status: { $ne: "deleted" } })
+      .select("name")
+      .lean(),
+    Tag.find({ status: { $ne: "deleted" } })
+      .select("name")
+      .lean(),
     SeoSettings.findOne({ key: "global" }).select("search").lean() as unknown as Promise<{
       search?: { synonyms?: string[]; boostNewArrivals?: boolean };
     } | null>,
@@ -126,9 +136,12 @@ async function buildIndex(): Promise<IndexState> {
     add(String(product.name ?? ""), FIELD_WEIGHTS.name);
     add(String(product.fabricDetails ?? ""), FIELD_WEIGHTS.fabric);
     add(String(product.description ?? "").slice(0, 600), FIELD_WEIGHTS.description);
-    for (const id of (product.categoryIds as unknown[]) ?? []) add(categoryNames.get(String(id)), FIELD_WEIGHTS.category);
-    for (const id of (product.collectionIds as unknown[]) ?? []) add(collectionNames.get(String(id)), FIELD_WEIGHTS.collection);
-    for (const id of (product.tagIds as unknown[]) ?? []) add(tagNames.get(String(id)), FIELD_WEIGHTS.tag);
+    for (const id of (product.categoryIds as unknown[]) ?? [])
+      add(categoryNames.get(String(id)), FIELD_WEIGHTS.category);
+    for (const id of (product.collectionIds as unknown[]) ?? [])
+      add(collectionNames.get(String(id)), FIELD_WEIGHTS.collection);
+    for (const id of (product.tagIds as unknown[]) ?? [])
+      add(tagNames.get(String(id)), FIELD_WEIGHTS.tag);
     const badges = (product.computedBadges ?? {}) as { newArrival?: boolean; bestSeller?: boolean };
 
     return {
@@ -137,7 +150,9 @@ async function buildIndex(): Promise<IndexState> {
       id: String(product._id),
       name: String(product.name ?? ""),
       newArrival: Boolean(badges.newArrival),
-      skus: ((product.variants as Array<{ sku?: string }>) ?? []).map((variant) => String(variant.sku ?? "").toUpperCase()),
+      skus: ((product.variants as Array<{ sku?: string }>) ?? []).map((variant) =>
+        String(variant.sku ?? "").toUpperCase(),
+      ),
       slug: String(product.slug ?? ""),
       tokens,
     };
@@ -181,7 +196,8 @@ function expandToken(token: string, index: IndexState, allowPrefix: boolean) {
   const variants = new Map<string, number>([[token, 1]]);
 
   for (const synonym of index.synonyms.get(token) ?? []) {
-    for (const part of tokenize(synonym)) variants.set(part, Math.max(variants.get(part) ?? 0, 0.9));
+    for (const part of tokenize(synonym))
+      variants.set(part, Math.max(variants.get(part) ?? 0, 0.9));
   }
 
   const typos = allowedTypos(token);
@@ -199,7 +215,10 @@ function expandToken(token: string, index: IndexState, allowPrefix: boolean) {
   return variants;
 }
 
-export async function searchProducts(query: string, options: { limit?: number; prefix?: boolean } = {}) {
+export async function searchProducts(
+  query: string,
+  options: { limit?: number; prefix?: boolean } = {},
+) {
   const index = await getIndex();
   const raw = query.trim();
   const tokens = tokenize(raw);
@@ -215,7 +234,11 @@ export async function searchProducts(query: string, options: { limit?: number; p
   const scored: Array<{ id: string; score: number }> = [];
 
   for (const product of index.products) {
-    if (product.skus.some((sku) => sku === skuQuery || (skuQuery.length >= 4 && sku.startsWith(skuQuery)))) {
+    if (
+      product.skus.some(
+        (sku) => sku === skuQuery || (skuQuery.length >= 4 && sku.startsWith(skuQuery)),
+      )
+    ) {
       scored.push({ id: product.id, score: 1000 });
       continue;
     }

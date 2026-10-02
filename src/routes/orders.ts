@@ -88,15 +88,24 @@ ordersRouter.get(
         orderNumber: String(req.params.orderNumber),
         userId: req.user!.id,
       });
-      const order = result.order as Record<string, unknown> & { _id: unknown; paymentSessionId?: unknown };
+      const order = result.order as Record<string, unknown> & {
+        _id: unknown;
+        paymentSessionId?: unknown;
+      };
       const [productionTrackers, paymentSession, refunds, documents] = await Promise.all([
-        ProductionTracker.find({ orderNumber: String(req.params.orderNumber) }).sort({ createdAt: 1 }).lean(),
+        ProductionTracker.find({ orderNumber: String(req.params.orderNumber) })
+          .sort({ createdAt: 1 })
+          .lean(),
         order.paymentSessionId
           ? PaymentSession.findById(order.paymentSessionId)
-              .select("method status amount paidAmount outstandingAmount refundedAmount paymentMode currencyCode dueAt")
+              .select(
+                "method status amount paidAmount outstandingAmount refundedAmount paymentMode currencyCode dueAt",
+              )
               .lean()
           : Promise.resolve(null),
-        Refund.find({ orderId: order._id }).select("amount method status source processedAt createdAt").lean(),
+        Refund.find({ orderId: order._id })
+          .select("amount method status source processedAt createdAt")
+          .lean(),
         OrderDocument.find({ orderId: order._id })
           .select("documentType documentNumber createdAt")
           .lean(),
@@ -359,12 +368,16 @@ ordersRouter.post(
   "/admin/:orderId/offline-payment",
   requirePermission({ module: "payments", action: "manage" }),
   validateRequest({
-    body: z.object({ amount: z.coerce.number().positive(), reference: z.string().trim().min(3).max(80) }).strict(),
+    body: z
+      .object({ amount: z.coerce.number().positive(), reference: z.string().trim().min(3).max(80) })
+      .strict(),
     params: z.object({ orderId: objectIdSchema }).strict(),
   }),
   async (req, res, next) => {
     try {
-      const order = (await Order.findById(String(req.params.orderId)).select("paymentSessionId").lean()) as unknown as {
+      const order = (await Order.findById(String(req.params.orderId))
+        .select("paymentSessionId")
+        .lean()) as unknown as {
         paymentSessionId?: unknown;
       } | null;
       if (!order?.paymentSessionId) throw new AppError("Order has no payment session", 404);
@@ -391,7 +404,11 @@ ordersRouter.get(
       if (typeof req.query.status === "string") filter.status = req.query.status;
       if (typeof req.query.source === "string") filter.source = req.query.source;
       const [items, total] = await Promise.all([
-        Refund.find(filter).sort({ createdAt: -1 }).skip(pagination.skip).limit(pagination.limit).lean(),
+        Refund.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(pagination.skip)
+          .limit(pagination.limit)
+          .lean(),
         Refund.countDocuments(filter),
       ]);
       res.json(buildPaginatedResult(items, total, pagination));
@@ -412,7 +429,11 @@ ordersRouter.post(
   async (req, res, next) => {
     try {
       const refund = await Refund.findOneAndUpdate(
-        { _id: req.params.refundId, status: "pending", method: { $in: ["bank_transfer", "store_credit"] } },
+        {
+          _id: req.params.refundId,
+          status: "pending",
+          method: { $in: ["bank_transfer", "store_credit"] },
+        },
         {
           $set: {
             bankTransferReference: req.body.reference,
@@ -425,7 +446,10 @@ ordersRouter.post(
       );
       if (!refund) throw new AppError("Refund not found or not awaiting a manual payout", 404);
       if (refund.paymentSessionId) {
-        await PaymentSession.updateOne({ _id: refund.paymentSessionId }, { $inc: { refundedAmount: refund.amount } });
+        await PaymentSession.updateOne(
+          { _id: refund.paymentSessionId },
+          { $inc: { refundedAmount: refund.amount } },
+        );
       }
       res.json({ refund });
     } catch (error) {

@@ -332,10 +332,7 @@ async function consumeBuckets(userId: string, points: number) {
     }
 
     const used = Math.min(bucket.remaining, outstanding);
-    await RewardPointsLedger.updateOne(
-      { _id: bucket._id },
-      { $inc: { remaining: -used } },
-    );
+    await RewardPointsLedger.updateOne({ _id: bucket._id }, { $inc: { remaining: -used } });
     outstanding -= used;
   }
 }

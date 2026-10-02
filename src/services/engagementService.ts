@@ -122,7 +122,9 @@ export async function subscribeNewsletter(input: {
     { email },
     { $set: { marketingConsentAt: new Date(), "notificationPreferences.marketingEmail": true } },
   );
-  const subscriber = await NewsletterSubscriber.findOne({ email }).lean() as { unsubscribeToken: string } | null;
+  const subscriber = (await NewsletterSubscriber.findOne({ email }).lean()) as {
+    unsubscribeToken: string;
+  } | null;
   await enqueueNotification({
     channel: "email",
     eventType: "newsletter_welcome",
@@ -143,7 +145,8 @@ export async function listNewsletterSubscribers(
 ) {
   const query: Record<string, unknown> = {};
   if (filter.status) query.status = filter.status;
-  if (filter.search) query.email = { $options: "i", $regex: filter.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") };
+  if (filter.search)
+    query.email = { $options: "i", $regex: filter.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") };
 
   const [items, total, subscribed] = await Promise.all([
     NewsletterSubscriber.find(query)
@@ -166,7 +169,14 @@ export async function exportNewsletterCsv() {
     .lean()) as unknown as Array<Record<string, unknown>>;
   const header = "email,status,source,consent_at,unsubscribed_at,created_at";
   const lines = rows.map((row) =>
-    [row.email, row.status, row.source, iso(row.consentAt), iso(row.unsubscribedAt), iso(row.createdAt)]
+    [
+      row.email,
+      row.status,
+      row.source,
+      iso(row.consentAt),
+      iso(row.unsubscribedAt),
+      iso(row.createdAt),
+    ]
       .map(csvCell)
       .join(","),
   );
@@ -181,9 +191,16 @@ export async function subscribeBackInStock(input: {
   email: string;
   userId?: string;
 }) {
-  const product = (await Product.findOne({ _id: input.productId, active: true, status: { $ne: "deleted" } })
+  const product = (await Product.findOne({
+    _id: input.productId,
+    active: true,
+    status: { $ne: "deleted" },
+  })
     .select("name variants._id variants.sku")
-    .lean()) as unknown as { name: string; variants: Array<{ _id: Types.ObjectId; sku: string }> } | null;
+    .lean()) as unknown as {
+    name: string;
+    variants: Array<{ _id: Types.ObjectId; sku: string }>;
+  } | null;
   const variant = product?.variants.find((item) => String(item._id) === input.variantId);
 
   if (!product || !variant) {
@@ -217,9 +234,30 @@ export async function subscribeBackInStock(input: {
 export async function listBackInStockDemand() {
   return BackInStockSubscription.aggregate([
     { $match: { status: "waiting" } },
-    { $group: { _id: { productId: "$productId", sku: "$sku" }, subscribers: { $sum: 1 }, oldest: { $min: "$createdAt" } } },
-    { $lookup: { as: "product", foreignField: "_id", from: "products", localField: "_id.productId" } },
-    { $project: { oldest: 1, productName: { $first: "$product.name" }, productSlug: { $first: "$product.slug" }, sku: "$_id.sku", subscribers: 1 } },
+    {
+      $group: {
+        _id: { productId: "$productId", sku: "$sku" },
+        subscribers: { $sum: 1 },
+        oldest: { $min: "$createdAt" },
+      },
+    },
+    {
+      $lookup: {
+        as: "product",
+        foreignField: "_id",
+        from: "products",
+        localField: "_id.productId",
+      },
+    },
+    {
+      $project: {
+        oldest: 1,
+        productName: { $first: "$product.name" },
+        productSlug: { $first: "$product.slug" },
+        sku: "$_id.sku",
+        subscribers: 1,
+      },
+    },
     { $sort: { subscribers: -1 } },
     { $limit: 200 },
   ]);
@@ -240,9 +278,16 @@ export async function processBackInStockAlerts(limit = 500) {
   for (const sku of restocked) {
     const subscriptions = (await BackInStockSubscription.find({ sku, status: "waiting" })
       .limit(limit)
-      .lean()) as unknown as Array<{ _id: Types.ObjectId; email: string; productId: Types.ObjectId; unsubscribeToken: string }>;
+      .lean()) as unknown as Array<{
+      _id: Types.ObjectId;
+      email: string;
+      productId: Types.ObjectId;
+      unsubscribeToken: string;
+    }>;
     const product = subscriptions.length
-      ? ((await Product.findById(subscriptions[0].productId).select("name slug").lean()) as unknown as { name: string; slug: string } | null)
+      ? ((await Product.findById(subscriptions[0].productId)
+          .select("name slug")
+          .lean()) as unknown as { name: string; slug: string } | null)
       : null;
 
     for (const subscription of subscriptions) {
@@ -252,7 +297,9 @@ export async function processBackInStockAlerts(limit = 500) {
       );
       if (!claimed.modifiedCount || !product) continue;
 
-      const productUrl = frontendUrl(`/shop/${product.slug}?utm_source=back_in_stock&utm_medium=email`);
+      const productUrl = frontendUrl(
+        `/shop/${product.slug}?utm_source=back_in_stock&utm_medium=email`,
+      );
       await enqueueNotification({
         channel: "email",
         eventType: "back_in_stock",

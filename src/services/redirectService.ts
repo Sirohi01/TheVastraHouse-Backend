@@ -95,7 +95,12 @@ export async function createRedirect(input: {
 
 export async function updateRedirect(
   id: string,
-  input: Partial<{ source: string; destination: string; statusCode: 301 | 302 | 308; active: boolean }>,
+  input: Partial<{
+    source: string;
+    destination: string;
+    statusCode: 301 | 302 | 308;
+    active: boolean;
+  }>,
 ) {
   const redirect = await Redirect.findById(id);
 

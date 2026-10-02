@@ -69,23 +69,28 @@ export async function compileCustomerData(userId: string) {
   const id = new Types.ObjectId(userId);
   const user = (await User.findById(id)
     .select("-passwordHash -totpSecret -permissionOverrides -failedLoginCount -lockedUntil")
-    .lean()) as Record<string, unknown> & { email: string } | null;
+    .lean()) as (Record<string, unknown> & { email: string }) | null;
 
   if (!user) throw new AppError("User not found", 404);
 
-  const [orders, reviews, tickets, newsletter, alerts, points, credit, returns, sessions] = await Promise.all([
-    Order.find({ userId: id }).select("-costPrice -items.costPrice -risk -stockReservations").lean(),
-    ProductReview.find({ userId: id }).lean(),
-    SupportTicket.find({ email: user.email }).select("-ipAddress").lean(),
-    NewsletterSubscriber.find({ email: user.email }).select("-unsubscribeToken").lean(),
-    BackInStockSubscription.find({ email: user.email }).select("-unsubscribeToken").lean(),
-    RewardPointsLedger.find({ userId: id }).lean(),
-    StoreCreditTransaction.find({ userId: id }).lean(),
-    ReturnRequest.find({ userId: id }).lean(),
-    PaymentSession.find({ userId: id })
-      .select("orderReference method status amount paidAmount outstandingAmount currencyCode createdAt")
-      .lean(),
-  ]);
+  const [orders, reviews, tickets, newsletter, alerts, points, credit, returns, sessions] =
+    await Promise.all([
+      Order.find({ userId: id })
+        .select("-costPrice -items.costPrice -risk -stockReservations")
+        .lean(),
+      ProductReview.find({ userId: id }).lean(),
+      SupportTicket.find({ email: user.email }).select("-ipAddress").lean(),
+      NewsletterSubscriber.find({ email: user.email }).select("-unsubscribeToken").lean(),
+      BackInStockSubscription.find({ email: user.email }).select("-unsubscribeToken").lean(),
+      RewardPointsLedger.find({ userId: id }).lean(),
+      StoreCreditTransaction.find({ userId: id }).lean(),
+      ReturnRequest.find({ userId: id }).lean(),
+      PaymentSession.find({ userId: id })
+        .select(
+          "orderReference method status amount paidAmount outstandingAmount currencyCode createdAt",
+        )
+        .lean(),
+    ]);
 
   return {
     account: user,
@@ -104,7 +109,9 @@ export async function compileCustomerData(userId: string) {
 
 export async function requestDataExport(userId: string, stepUpToken?: string) {
   await consumeStepUpToken(userId, stepUpToken);
-  const user = (await User.findById(userId).select("email").lean()) as unknown as { email: string } | null;
+  const user = (await User.findById(userId).select("email").lean()) as unknown as {
+    email: string;
+  } | null;
   if (!user) throw new AppError("User not found", 404);
 
   const exportData = await compileCustomerData(userId);
@@ -130,12 +137,22 @@ export async function requestDataExport(userId: string, stepUpToken?: string) {
   return { requestNumber: request.requestNumber, status: request.status };
 }
 
-export async function requestAccountDeletion(userId: string, reason: string | undefined, stepUpToken?: string) {
+export async function requestAccountDeletion(
+  userId: string,
+  reason: string | undefined,
+  stepUpToken?: string,
+) {
   await consumeStepUpToken(userId, stepUpToken);
-  const user = (await User.findById(userId).select("email").lean()) as unknown as { email: string } | null;
+  const user = (await User.findById(userId).select("email").lean()) as unknown as {
+    email: string;
+  } | null;
   if (!user) throw new AppError("User not found", 404);
 
-  const pending = await PrivacyRequest.exists({ status: { $in: ["pending", "processing"] }, type: "deletion", userId });
+  const pending = await PrivacyRequest.exists({
+    status: { $in: ["pending", "processing"] },
+    type: "deletion",
+    userId,
+  });
   if (pending) throw new AppError("A deletion request is already being processed", 409);
 
   const request = await PrivacyRequest.create({
@@ -167,7 +184,11 @@ export async function listOwnPrivacyRequests(userId: string) {
 }
 
 export async function downloadExport(userId: string, requestNumberValue: string) {
-  const request = (await PrivacyRequest.findOne({ requestNumber: requestNumberValue, type: "export", userId })
+  const request = (await PrivacyRequest.findOne({
+    requestNumber: requestNumberValue,
+    type: "export",
+    userId,
+  })
     .select("+exportData")
     .lean()) as unknown as { exportData?: unknown; createdAt: Date } | null;
 
@@ -179,12 +200,20 @@ export async function downloadExport(userId: string, requestNumberValue: string)
   return request.exportData;
 }
 
-export async function listPrivacyRequests(filter: { status?: string; type?: string }, pagination: PaginationOptions) {
+export async function listPrivacyRequests(
+  filter: { status?: string; type?: string },
+  pagination: PaginationOptions,
+) {
   const query: Record<string, unknown> = {};
   if (filter.status) query.status = filter.status;
   if (filter.type) query.type = filter.type;
   const [items, total] = await Promise.all([
-    PrivacyRequest.find(query).select("-exportData").sort({ dueAt: 1 }).skip(pagination.skip).limit(pagination.limit).lean(),
+    PrivacyRequest.find(query)
+      .select("-exportData")
+      .sort({ dueAt: 1 })
+      .skip(pagination.skip)
+      .limit(pagination.limit)
+      .lean(),
     PrivacyRequest.countDocuments(query),
   ]);
   return buildPaginatedResult(items, total, pagination);
@@ -200,9 +229,13 @@ export async function processDeletionRequest(input: {
   decision: "approve" | "reject";
   note?: string;
 }) {
-  const request = await PrivacyRequest.findOne({ requestNumber: input.requestNumber, type: "deletion" });
+  const request = await PrivacyRequest.findOne({
+    requestNumber: input.requestNumber,
+    type: "deletion",
+  });
   if (!request) throw new AppError("Request not found", 404);
-  if (!["pending", "processing"].includes(request.status)) throw new AppError("Request already resolved", 409);
+  if (!["pending", "processing"].includes(request.status))
+    throw new AppError("Request already resolved", 409);
 
   const userId = String(request.userId);
 
@@ -218,12 +251,17 @@ export async function processDeletionRequest(input: {
 
   const openOrders = await Order.countDocuments({ status: { $in: OPEN_ORDER_STATUSES }, userId });
   if (openOrders) {
-    throw new AppError(`Customer has ${openOrders} open order(s). Complete or cancel them before deletion.`, 409);
+    throw new AppError(
+      `Customer has ${openOrders} open order(s). Complete or cancel them before deletion.`,
+      409,
+    );
   }
 
   request.status = "processing";
   await request.save();
-  const user = (await User.findById(userId).select("email").lean()) as unknown as { email: string } | null;
+  const user = (await User.findById(userId).select("email").lean()) as unknown as {
+    email: string;
+  } | null;
   const originalEmail = user?.email ?? request.email;
   const anonymousEmail = `deleted-${userId}@anonymized.invalid`;
   const scrubbedAddress = {
@@ -239,8 +277,14 @@ export async function processDeletionRequest(input: {
     "shippingAddress.line2": undefined,
     "shippingAddress.phone": undefined,
   };
-  const unset = Object.fromEntries(Object.entries(scrubbedAddress).filter(([, value]) => value === undefined).map(([key]) => [key, ""]));
-  const set = Object.fromEntries(Object.entries(scrubbedAddress).filter(([, value]) => value !== undefined));
+  const unset = Object.fromEntries(
+    Object.entries(scrubbedAddress)
+      .filter(([, value]) => value === undefined)
+      .map(([key]) => [key, ""]),
+  );
+  const set = Object.fromEntries(
+    Object.entries(scrubbedAddress).filter(([, value]) => value !== undefined),
+  );
 
   await revokeAllUserSessions(userId);
   await Promise.all([
@@ -265,10 +309,25 @@ export async function processDeletionRequest(input: {
     ),
     // Place of supply (city/state/PIN) stays on orders for GST; identity fields are removed.
     Order.updateMany({ userId }, { $set: set, $unset: unset }),
-    PaymentSession.updateMany({ userId }, { $unset: { guestEmail: "", manualScreenshot: "", upiReference: "" } }),
-    PaymentHistory.updateMany({ paymentSessionId: { $in: await PaymentSession.find({ userId }).distinct("_id") } }, { $unset: { "metadata.upiReference": "" } }),
-    ProductReview.updateMany({ userId }, { $set: { guestName: "Former customer" }, $unset: { guestEmail: "", photos: "" } }),
-    SupportTicket.updateMany({ email: originalEmail }, { $set: { email: anonymousEmail, name: "Deleted customer" }, $unset: { ipAddress: "", phone: "" } }),
+    PaymentSession.updateMany(
+      { userId },
+      { $unset: { guestEmail: "", manualScreenshot: "", upiReference: "" } },
+    ),
+    PaymentHistory.updateMany(
+      { paymentSessionId: { $in: await PaymentSession.find({ userId }).distinct("_id") } },
+      { $unset: { "metadata.upiReference": "" } },
+    ),
+    ProductReview.updateMany(
+      { userId },
+      { $set: { guestName: "Former customer" }, $unset: { guestEmail: "", photos: "" } },
+    ),
+    SupportTicket.updateMany(
+      { email: originalEmail },
+      {
+        $set: { email: anonymousEmail, name: "Deleted customer" },
+        $unset: { ipAddress: "", phone: "" },
+      },
+    ),
     NotificationLog.updateMany({ to: originalEmail }, { $set: { to: anonymousEmail } }),
     NewsletterSubscriber.deleteMany({ email: originalEmail }),
     BackInStockSubscription.deleteMany({ email: originalEmail }),

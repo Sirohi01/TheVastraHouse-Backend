@@ -63,7 +63,12 @@ engagementRouter.post(
 
 engagementRouter.post(
   "/back-in-stock",
-  rateLimit({ identify: emailIdentity, keyPrefix: "back-in-stock", max: 20, windowMs: 60 * 60 * 1000 }),
+  rateLimit({
+    identify: emailIdentity,
+    keyPrefix: "back-in-stock",
+    max: 20,
+    windowMs: 60 * 60 * 1000,
+  }),
   validateRequest({ body: z.object({ email, productId: objectId, variantId: objectId }).strict() }),
   async (req, res, next) => {
     try {
@@ -140,7 +145,11 @@ engagementRouter.post(
       const source = normaliseSource(req.body.source, req.body.referrerHost);
       const date = new Date().toISOString().slice(0, 10);
       await SiteVisitDaily.updateOne(
-        { date, medium: (req.body.medium || (source === "direct" ? "none" : "referral")).toLowerCase(), source },
+        {
+          date,
+          medium: (req.body.medium || (source === "direct" ? "none" : "referral")).toLowerCase(),
+          source,
+        },
         { $inc: { sessions: 1 } },
         { upsert: true },
       );
@@ -152,7 +161,13 @@ engagementRouter.post(
 );
 
 function normaliseSource(source?: string, referrerHost?: string) {
-  if (source) return source.toLowerCase().replace(/[^a-z0-9_.-]/g, "").slice(0, 40) || "direct";
+  if (source)
+    return (
+      source
+        .toLowerCase()
+        .replace(/[^a-z0-9_.-]/g, "")
+        .slice(0, 40) || "direct"
+    );
   if (!referrerHost) return "direct";
   const host = referrerHost.toLowerCase().replace(/^www\./, "");
   if (/google\./.test(host)) return "google";

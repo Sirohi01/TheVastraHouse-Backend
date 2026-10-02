@@ -40,7 +40,9 @@ function withUtm(path: string, campaign: string, medium = "email") {
 // ---------- Automations ----------
 
 export async function getAutomationSettings() {
-  const rows = (await AutomationSetting.find({}).lean()) as unknown as Array<{ key: AutomationKey } & Record<string, unknown>>;
+  const rows = (await AutomationSetting.find({}).lean()) as unknown as Array<
+    { key: AutomationKey } & Record<string, unknown>
+  >;
   return (Object.keys(AUTOMATION_DEFAULTS) as AutomationKey[]).map((key) => ({
     key,
     ...AUTOMATION_DEFAULTS[key],
@@ -54,7 +56,8 @@ export async function updateAutomationSetting(
 ) {
   if (input.couponCode) {
     const coupon = await Coupon.exists({ active: true, code: input.couponCode.toUpperCase() });
-    if (!coupon) throw new AppError(`Coupon ${input.couponCode} does not exist or is inactive`, 400);
+    if (!coupon)
+      throw new AppError(`Coupon ${input.couponCode} does not exist or is inactive`, 400);
   }
 
   return AutomationSetting.findOneAndUpdate(
@@ -63,7 +66,9 @@ export async function updateAutomationSetting(
       $set: {
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
         ...(input.delayHours !== undefined ? { delayHours: input.delayHours } : {}),
-        ...(input.couponCode !== undefined ? { couponCode: input.couponCode?.toUpperCase() || undefined } : {}),
+        ...(input.couponCode !== undefined
+          ? { couponCode: input.couponCode?.toUpperCase() || undefined }
+          : {}),
       },
     },
     { new: true, upsert: true },
@@ -99,7 +104,12 @@ export async function runAbandonedCartRecovery(now = new Date()) {
     recoveryEmailSentAt: { $exists: false },
   })
     .limit(200)
-    .lean()) as unknown as Array<{ _id: Types.ObjectId; cartId: Types.ObjectId; email: string; userId?: Types.ObjectId }>;
+    .lean()) as unknown as Array<{
+    _id: Types.ObjectId;
+    cartId: Types.ObjectId;
+    email: string;
+    userId?: Types.ObjectId;
+  }>;
   let sent = 0;
 
   for (const event of events) {
@@ -115,7 +125,9 @@ export async function runAbandonedCartRecovery(now = new Date()) {
     if (!cart?.items?.length) continue;
 
     const lines = cart.items.map((item) => `• ${item.productName} × ${item.quantity}`).join("\n");
-    const coupon = config.couponCode ? `\n\nUse code ${config.couponCode} for a little something off.` : "";
+    const coupon = config.couponCode
+      ? `\n\nUse code ${config.couponCode} for a little something off.`
+      : "";
     await enqueueNotification({
       channel: "email",
       eventType: "abandoned_cart_recovery",
@@ -161,7 +173,9 @@ export async function runWinBackCampaign() {
 
   for (const customer of customers) {
     if (recent.has(customer.email.toLowerCase())) continue;
-    const coupon = config.couponCode ? `\n\nAs a welcome back, use code ${config.couponCode} at checkout.` : "";
+    const coupon = config.couponCode
+      ? `\n\nAs a welcome back, use code ${config.couponCode} at checkout.`
+      : "";
     await enqueueNotification({
       channel: "email",
       eventType: "win_back",
@@ -187,7 +201,10 @@ export async function runReviewRequests(now = new Date()) {
   const deliveredBefore = new Date(now.getTime() - config.delayHours * 3_600_000);
   const orders = (await Order.find({
     reviewRequestSentAt: { $exists: false },
-    "shipment.deliveredAt": { $lte: deliveredBefore, $gte: new Date(now.getTime() - 60 * 86_400_000) },
+    "shipment.deliveredAt": {
+      $lte: deliveredBefore,
+      $gte: new Date(now.getTime() - 60 * 86_400_000),
+    },
     status: "delivered",
     userId: { $exists: true },
   })
@@ -210,11 +227,18 @@ export async function runReviewRequests(now = new Date()) {
 
     const user = (await User.findById(order.userId)
       .select("email firstName notificationPreferences.reviewRequests")
-      .lean()) as unknown as { email: string; firstName?: string; notificationPreferences?: { reviewRequests?: boolean } } | null;
+      .lean()) as unknown as {
+      email: string;
+      firstName?: string;
+      notificationPreferences?: { reviewRequests?: boolean };
+    } | null;
     if (!user || user.notificationPreferences?.reviewRequests === false) continue;
 
     const links = order.items
-      .map((item) => `• ${item.productName}: ${siteUrl(withUtm(`/shop/${item.slug}#reviews`, "review_request"))}`)
+      .map(
+        (item) =>
+          `• ${item.productName}: ${siteUrl(withUtm(`/shop/${item.slug}#reviews`, "review_request"))}`,
+      )
       .join("\n");
     await enqueueNotification({
       channel: "email",
@@ -276,7 +300,11 @@ type CampaignInput = {
   subject: string;
   previewText?: string;
   bodyHtml: string;
-  audience: { type: "segment" | "newsletter" | "all_consented" | "custom_segment"; segment?: string; customSegmentId?: string };
+  audience: {
+    type: "segment" | "newsletter" | "all_consented" | "custom_segment";
+    segment?: string;
+    customSegmentId?: string;
+  };
   couponId?: string | null;
   banner?: { enabled?: boolean; title?: string; text?: string; href?: string; media?: unknown };
   startsAt?: Date;
@@ -286,7 +314,10 @@ type CampaignInput = {
 };
 
 export async function listCampaigns() {
-  const campaigns = (await MarketingCampaign.find({}).sort({ createdAt: -1 }).limit(200).lean()) as unknown as Array<
+  const campaigns = (await MarketingCampaign.find({})
+    .sort({ createdAt: -1 })
+    .limit(200)
+    .lean()) as unknown as Array<
     Record<string, unknown> & { utmCampaign?: string; _id: Types.ObjectId }
   >;
   // Revenue attribution by UTM campaign (FR-MKT performance visibility).
@@ -294,18 +325,32 @@ export async function listCampaigns() {
   const attribution = utms.length
     ? ((await Order.aggregate([
         { $match: { "attribution.utmCampaign": { $in: utms }, status: { $in: REVENUE_STATUSES } } },
-        { $group: { _id: "$attribution.utmCampaign", orders: { $sum: 1 }, revenue: { $sum: "$totals.grandTotal" } } },
+        {
+          $group: {
+            _id: "$attribution.utmCampaign",
+            orders: { $sum: 1 },
+            revenue: { $sum: "$totals.grandTotal" },
+          },
+        },
       ])) as Array<{ _id: string; orders: number; revenue: number }>)
     : [];
 
   return campaigns.map((campaign) => {
     const row = attribution.find((item) => item._id === campaign.utmCampaign);
-    return { ...campaign, attributedOrders: row?.orders ?? 0, attributedRevenue: row?.revenue ?? 0 };
+    return {
+      ...campaign,
+      attributedOrders: row?.orders ?? 0,
+      attributedRevenue: row?.revenue ?? 0,
+    };
   });
 }
 
 function slugifyCampaign(name: string) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 60);
 }
 
 export async function createCampaign(input: CampaignInput, createdBy: string) {
@@ -315,7 +360,9 @@ export async function createCampaign(input: CampaignInput, createdBy: string) {
     campaignStatus: input.scheduledAt ? "scheduled" : "draft",
     couponId: input.couponId || undefined,
     createdBy,
-    utmCampaign: input.utmCampaign ? slugifyCampaign(input.utmCampaign) : slugifyCampaign(input.name),
+    utmCampaign: input.utmCampaign
+      ? slugifyCampaign(input.utmCampaign)
+      : slugifyCampaign(input.name),
   });
 }
 
@@ -356,7 +403,8 @@ async function resolveAudience(audience: CampaignInput["audience"]) {
     const subscribers = (await NewsletterSubscriber.find({ status: "subscribed" })
       .select("email unsubscribeToken")
       .lean()) as unknown as Array<{ email: string; unsubscribeToken: string }>;
-    for (const subscriber of subscribers) recipients.set(subscriber.email, { newsletterToken: subscriber.unsubscribeToken });
+    for (const subscriber of subscribers)
+      recipients.set(subscriber.email, { newsletterToken: subscriber.unsubscribeToken });
   }
 
   if (audience.type !== "newsletter") {
@@ -369,7 +417,9 @@ async function resolveAudience(audience: CampaignInput["audience"]) {
 
     if (audience.type === "segment" && audience.segment) query["crm.segment"] = audience.segment;
     if (audience.type === "custom_segment") {
-      const segment = (await CustomerSegment.findById(audience.customSegmentId).lean()) as unknown as {
+      const segment = (await CustomerSegment.findById(
+        audience.customSegmentId,
+      ).lean()) as unknown as {
         rules: Parameters<typeof customSegmentQuery>[0];
       } | null;
       if (!segment) throw new AppError("Custom segment not found", 404);
@@ -377,7 +427,10 @@ async function resolveAudience(audience: CampaignInput["audience"]) {
       query = { ...customSegmentQuery({ ...segment.rules, marketingConsentOnly: true }) };
     }
 
-    const users = (await User.find(query).select("email").lean()) as unknown as Array<{ _id: Types.ObjectId; email: string }>;
+    const users = (await User.find(query).select("email").lean()) as unknown as Array<{
+      _id: Types.ObjectId;
+      email: string;
+    }>;
     for (const user of users) {
       if (!recipients.has(user.email)) recipients.set(user.email, { userId: String(user._id) });
     }
@@ -387,7 +440,9 @@ async function resolveAudience(audience: CampaignInput["audience"]) {
 }
 
 export async function previewCampaignAudience(id: string) {
-  const campaign = (await MarketingCampaign.findById(id).lean()) as unknown as { audience: CampaignInput["audience"] } | null;
+  const campaign = (await MarketingCampaign.findById(id).lean()) as unknown as {
+    audience: CampaignInput["audience"];
+  } | null;
   if (!campaign) throw new AppError("Campaign not found", 404);
   const recipients = await resolveAudience(campaign.audience);
   return { recipients: recipients.size, sample: [...recipients.keys()].slice(0, 10) };
@@ -405,7 +460,9 @@ export async function sendCampaign(id: string) {
   try {
     const recipients = await resolveAudience(campaign.audience as CampaignInput["audience"]);
     const coupon = campaign.couponId
-      ? ((await Coupon.findById(campaign.couponId).select("code").lean()) as unknown as { code: string } | null)
+      ? ((await Coupon.findById(campaign.couponId).select("code").lean()) as unknown as {
+          code: string;
+        } | null)
       : null;
     const text = htmlToPlainText(campaign.bodyHtml);
     let queued = 0;
@@ -442,7 +499,10 @@ export async function sendCampaign(id: string) {
 }
 
 export async function processScheduledCampaigns(now = new Date()) {
-  const due = (await MarketingCampaign.find({ campaignStatus: "scheduled", scheduledAt: { $lte: now } })
+  const due = (await MarketingCampaign.find({
+    campaignStatus: "scheduled",
+    scheduledAt: { $lte: now },
+  })
     .select("_id")
     .limit(10)
     .lean()) as unknown as Array<{ _id: Types.ObjectId }>;
@@ -479,7 +539,9 @@ export async function getActiveCampaignBanner(now = new Date()) {
   return {
     couponCode: campaign.couponId?.code,
     endsAt: campaign.endsAt,
-    href: campaign.banner.href ? withUtm(campaign.banner.href, campaign.utmCampaign ?? "festival", "banner") : undefined,
+    href: campaign.banner.href
+      ? withUtm(campaign.banner.href, campaign.utmCampaign ?? "festival", "banner")
+      : undefined,
     media: campaign.banner.media,
     text: campaign.banner.text,
     title: campaign.banner.title ?? campaign.name,

@@ -50,7 +50,12 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
         passwordChangedAt?: Date;
       } | null;
 
-      if (!account || account.status !== "active" || account.deactivatedAt || account.anonymizedAt) {
+      if (
+        !account ||
+        account.status !== "active" ||
+        account.deactivatedAt ||
+        account.anonymizedAt
+      ) {
         next(new AppError("Authentication token is invalid or expired", 401));
         return;
       }

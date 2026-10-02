@@ -3,11 +3,7 @@ import multer from "multer";
 import { z } from "zod";
 import { AppError } from "../middleware/errorHandler.js";
 import { rateLimit } from "../middleware/rateLimit.js";
-import {
-  requireAuth,
-  requirePermission,
-  userHasPermission,
-} from "../middleware/authMiddleware.js";
+import { requireAuth, requirePermission, userHasPermission } from "../middleware/authMiddleware.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { Media } from "../models/Media.js";
 import { aspectRatios } from "../models/shared/mediaReference.js";

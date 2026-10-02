@@ -13,7 +13,11 @@ import { getLoyaltyTier } from "../services/loyaltyTierService.js";
 import { enqueueNotification } from "../services/notificationDispatchService.js";
 import { getOrCreateReferralCode } from "../services/referralService.js";
 import { getRewardPointsBalance } from "../services/rewardPointsService.js";
-import { getStoreCreditBalance, issueStoreCredit, reverseStoreCredit } from "../services/storeCreditService.js";
+import {
+  getStoreCreditBalance,
+  issueStoreCredit,
+  reverseStoreCredit,
+} from "../services/storeCreditService.js";
 import { buildPaginatedResult, parsePagination } from "../utils/pagination.js";
 
 export const loyaltyRouter = Router();
@@ -46,11 +50,18 @@ loyaltyRouter.get(
       const pagination = parsePagination(req.query);
       const filter: Record<string, unknown> = {};
       if (typeof req.query.search === "string" && req.query.search) {
-        const pattern = { $options: "i", $regex: req.query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") };
+        const pattern = {
+          $options: "i",
+          $regex: req.query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        };
         filter.$or = [{ code: pattern }, { recipientEmail: pattern }];
       }
       const [giftCards, total] = await Promise.all([
-        GiftCard.find(filter).sort({ createdAt: -1 }).skip(pagination.skip).limit(pagination.limit).lean(),
+        GiftCard.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(pagination.skip)
+          .limit(pagination.limit)
+          .lean(),
         GiftCard.countDocuments(filter),
       ]);
 
@@ -165,14 +176,22 @@ loyaltyRouter.post(
   validateRequest({
     params: z.object({ id: objectIdSchema }).strict(),
     body: z
-      .object({ amount: z.coerce.number().refine((value) => value !== 0, "Amount cannot be zero"), notes: z.string().trim().min(3).max(300) })
+      .object({
+        amount: z.coerce.number().refine((value) => value !== 0, "Amount cannot be zero"),
+        notes: z.string().trim().min(3).max(300),
+      })
       .strict(),
   }),
   async (req, res, next) => {
     try {
       const userId = String(req.params.id);
       if (req.body.amount > 0) {
-        await issueStoreCredit({ amount: req.body.amount, notes: req.body.notes, sourceType: "admin", userId });
+        await issueStoreCredit({
+          amount: req.body.amount,
+          notes: req.body.notes,
+          sourceType: "admin",
+          userId,
+        });
       } else {
         const reversed = await reverseStoreCredit({
           amount: Math.abs(req.body.amount),
@@ -201,14 +220,27 @@ loyaltyRouter.post(
   validateRequest({
     params: z.object({ id: objectIdSchema }).strict(),
     body: z
-      .object({ points: z.coerce.number().int().refine((value) => value !== 0, "Points cannot be zero"), reason: z.string().trim().min(3).max(300) })
+      .object({
+        points: z.coerce
+          .number()
+          .int()
+          .refine((value) => value !== 0, "Points cannot be zero"),
+        reason: z.string().trim().min(3).max(300),
+      })
       .strict(),
   }),
   async (req, res, next) => {
     try {
       const userId = String(req.params.id);
-      const filter = req.body.points < 0 ? { _id: userId, rewardPointsBalance: { $gte: -req.body.points } } : { _id: userId };
-      const user = (await User.findOneAndUpdate(filter, { $inc: { rewardPointsBalance: req.body.points } }, { new: true })
+      const filter =
+        req.body.points < 0
+          ? { _id: userId, rewardPointsBalance: { $gte: -req.body.points } }
+          : { _id: userId };
+      const user = (await User.findOneAndUpdate(
+        filter,
+        { $inc: { rewardPointsBalance: req.body.points } },
+        { new: true },
+      )
         .select("rewardPointsBalance")
         .lean()) as unknown as { rewardPointsBalance: number } | null;
       if (!user) throw new AppError("Customer not found or insufficient points", 409);

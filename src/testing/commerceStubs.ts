@@ -48,9 +48,7 @@ export function stubPaymentCaptureClaims() {
   const claimed = new Set<string>();
 
   return stubStatics(PaymentSession, {
-    updateOne: (
-      filter: { _id?: unknown; capturedPaymentIds?: { $ne?: string } },
-    ) => {
+    updateOne: (filter: { _id?: unknown; capturedPaymentIds?: { $ne?: string } }) => {
       const key = `${String(filter._id)}:${filter.capturedPaymentIds?.$ne ?? ""}`;
 
       if (!filter.capturedPaymentIds?.$ne) {

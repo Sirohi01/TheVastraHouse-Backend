@@ -66,9 +66,10 @@ export async function evaluateCoupon(input: {
 }): Promise<CouponEvaluation> {
   const now = input.now ?? new Date();
   const code = normalizeCouponCode(input.code);
-  const coupon = (await Coupon.findOne({ code, status: { $ne: "deleted" } }).lean()) as
-    | CouponLean
-    | null;
+  const coupon = (await Coupon.findOne({
+    code,
+    status: { $ne: "deleted" },
+  }).lean()) as CouponLean | null;
 
   if (!coupon || !coupon.active) {
     throw new AppError("This coupon code is not valid", 400);
@@ -82,7 +83,11 @@ export async function evaluateCoupon(input: {
     throw new AppError("This coupon has expired", 400);
   }
 
-  if (coupon.usageLimit !== undefined && coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) {
+  if (
+    coupon.usageLimit !== undefined &&
+    coupon.usageLimit !== null &&
+    coupon.usedCount >= coupon.usageLimit
+  ) {
     throw new AppError("This coupon has reached its usage limit", 400);
   }
 

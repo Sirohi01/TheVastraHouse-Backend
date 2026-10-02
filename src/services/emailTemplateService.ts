@@ -11,7 +11,13 @@ function frontendUrl(path: string) {
   return `${env.FRONTEND_PUBLIC_URL.replace(/\/$/, "")}${path}`;
 }
 
-function actionEmail(input: { heading: string; body: string; cta: string; href: string; footer: string }) {
+function actionEmail(input: {
+  heading: string;
+  body: string;
+  cta: string;
+  href: string;
+  footer: string;
+}) {
   return `
     <div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#fffaf1;color:#2c231d;border:1px solid #e5dac7">
       <div style="background:#8b1e2d;color:#fff;padding:24px">
@@ -50,7 +56,8 @@ export function buildPasswordResetTemplate(token: string): AuthEmailTemplate {
     html: actionEmail({
       body: "We received a request to reset your password. Use the button below to choose a new one.",
       cta: "Reset password",
-      footer: "This link expires in 30 minutes and can be used once. If you did not request it, you can ignore this email.",
+      footer:
+        "This link expires in 30 minutes and can be used once. If you did not request it, you can ignore this email.",
       heading: "Reset your password",
       href,
     }),
@@ -74,7 +81,10 @@ export function buildTotpEnrolmentTemplate(code: string): AuthEmailTemplate {
 }
 
 function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+  return value.replace(
+    /[&<>"']/g,
+    (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!,
+  );
 }
 
 export function buildOrderConfirmationTemplate(input: {

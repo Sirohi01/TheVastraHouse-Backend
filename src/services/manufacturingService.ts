@@ -162,7 +162,12 @@ export async function completeProductionOrder(id: string, actorId: string) {
   if (fabricClaim?.fabricInventoryId && fabricClaim.fabricQuantityRequired > 0) {
     await FabricInventory.updateOne(
       { _id: fabricClaim.fabricInventoryId },
-      { $inc: { onHand: -fabricClaim.fabricQuantityRequired, reserved: -fabricClaim.fabricQuantityRequired } },
+      {
+        $inc: {
+          onHand: -fabricClaim.fabricQuantityRequired,
+          reserved: -fabricClaim.fabricQuantityRequired,
+        },
+      },
     );
   }
 
@@ -174,7 +179,11 @@ export async function completeProductionOrder(id: string, actorId: string) {
 
   if (stockClaim?.warehouseId) {
     await StockLedger.updateOne(
-      { incoming: { $gte: stockClaim.quantity }, sku: stockClaim.sku, warehouseId: stockClaim.warehouseId },
+      {
+        incoming: { $gte: stockClaim.quantity },
+        sku: stockClaim.sku,
+        warehouseId: stockClaim.warehouseId,
+      },
       { $inc: { incoming: -stockClaim.quantity } },
     );
     await adjustStock({
@@ -219,7 +228,11 @@ export async function cancelProductionOrder(id: string, actorId: string, reason:
     );
   }
 
-  order.history.push({ actorId: new Types.ObjectId(actorId), note: "Cancelled: " + reason, stage: order.stage });
+  order.history.push({
+    actorId: new Types.ObjectId(actorId),
+    note: "Cancelled: " + reason,
+    stage: order.stage,
+  });
   await order.save();
   return order;
 }

@@ -42,30 +42,42 @@ const mediaSchema = z
     url: z.string().min(1).max(1000),
     altText: z.string().min(3).max(160),
     type: z.enum(["image", "video", "pdf", "lookbook"]).default("image"),
-    aspectRatio: z.enum(["1:1", "4:5", "9:16", "16:7", "16:9", "21:9", "3:2", "2:3", "custom"]).default("16:9"),
+    aspectRatio: z
+      .enum(["1:1", "4:5", "9:16", "16:7", "16:9", "21:9", "3:2", "2:3", "custom"])
+      .default("16:9"),
     objectFit: z.enum(["cover", "contain"]).optional(),
   })
   .strict();
-const faqSchema = z.object({ question: z.string().trim().min(3).max(300), answer: z.string().trim().min(2).max(4000) }).strict();
+const faqSchema = z
+  .object({
+    question: z.string().trim().min(3).max(300),
+    answer: z.string().trim().min(2).max(4000),
+  })
+  .strict();
 
 // ---------------- Public ----------------
 
 contentRouter.get("/pages", async (req, res, next) => {
   try {
-    const kind = req.query.kind === "policy" || req.query.kind === "page" ? req.query.kind : undefined;
+    const kind =
+      req.query.kind === "policy" || req.query.kind === "page" ? req.query.kind : undefined;
     res.json({ pages: await listPublishedPages(kind) });
   } catch (error) {
     next(error);
   }
 });
 
-contentRouter.get("/pages/:slug", validateRequest({ params: slugParams }), async (req, res, next) => {
-  try {
-    res.json({ page: await getPublishedPage(String(req.params.slug)) });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.get(
+  "/pages/:slug",
+  validateRequest({ params: slugParams }),
+  async (req, res, next) => {
+    try {
+      res.json({ page: await getPublishedPage(String(req.params.slug)) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 contentRouter.get("/blog", async (req, res, next) => {
   try {
@@ -99,13 +111,17 @@ contentRouter.get("/blog/sitemap", async (_req, res, next) => {
   }
 });
 
-contentRouter.get("/blog/:slug", validateRequest({ params: slugParams }), async (req, res, next) => {
-  try {
-    res.json(await getPublishedPost(String(req.params.slug)));
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.get(
+  "/blog/:slug",
+  validateRequest({ params: slugParams }),
+  async (req, res, next) => {
+    try {
+      res.json(await getPublishedPost(String(req.params.slug)));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /** Used by the storefront edge middleware to apply 301/302s before rendering. */
 contentRouter.get(
@@ -150,13 +166,18 @@ contentRouter.get("/admin/pages", ...cmsManage, async (_req, res, next) => {
   }
 });
 
-contentRouter.post("/admin/pages", ...cmsManage, validateRequest({ body: pageSchema }), async (req, res, next) => {
-  try {
-    res.status(201).json({ page: await savePage(req.body, req.user!.id) });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.post(
+  "/admin/pages",
+  ...cmsManage,
+  validateRequest({ body: pageSchema }),
+  async (req, res, next) => {
+    try {
+      res.status(201).json({ page: await savePage(req.body, req.user!.id) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 contentRouter.patch(
   "/admin/pages/:id",
@@ -171,14 +192,19 @@ contentRouter.patch(
   },
 );
 
-contentRouter.delete("/admin/pages/:id", ...cmsManage, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    await deletePage(String(req.params.id));
-    res.json({ deleted: true });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.delete(
+  "/admin/pages/:id",
+  ...cmsManage,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      await deletePage(String(req.params.id));
+      res.json({ deleted: true });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // ---------------- Admin: blog ----------------
 
@@ -203,7 +229,10 @@ const postSchema = z
 contentRouter.get("/admin/blog", ...cmsManage, async (req, res, next) => {
   try {
     res.json(
-      await listAdminPosts(parsePagination(req.query), typeof req.query.search === "string" ? req.query.search : undefined),
+      await listAdminPosts(
+        parsePagination(req.query),
+        typeof req.query.search === "string" ? req.query.search : undefined,
+      ),
     );
   } catch (error) {
     next(error);
@@ -219,21 +248,31 @@ contentRouter.get("/admin/blog/meta", ...cmsManage, async (_req, res, next) => {
   }
 });
 
-contentRouter.get("/admin/blog/:id", ...cmsManage, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    res.json({ post: await getAdminPost(String(req.params.id)) });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.get(
+  "/admin/blog/:id",
+  ...cmsManage,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      res.json({ post: await getAdminPost(String(req.params.id)) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-contentRouter.post("/admin/blog", ...cmsManage, validateRequest({ body: postSchema }), async (req, res, next) => {
-  try {
-    res.status(201).json({ post: await savePost(req.body, req.user!.id) });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.post(
+  "/admin/blog",
+  ...cmsManage,
+  validateRequest({ body: postSchema }),
+  async (req, res, next) => {
+    try {
+      res.status(201).json({ post: await savePost(req.body, req.user!.id) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 contentRouter.patch(
   "/admin/blog/:id",
@@ -248,14 +287,19 @@ contentRouter.patch(
   },
 );
 
-contentRouter.delete("/admin/blog/:id", ...cmsManage, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    await deletePost(String(req.params.id));
-    res.json({ deleted: true });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.delete(
+  "/admin/blog/:id",
+  ...cmsManage,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      await deletePost(String(req.params.id));
+      res.json({ deleted: true });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 const blogCategorySchema = z
   .object({
@@ -266,13 +310,18 @@ const blogCategorySchema = z
   })
   .strict();
 
-contentRouter.post("/admin/blog-categories", ...cmsManage, validateRequest({ body: blogCategorySchema }), async (req, res, next) => {
-  try {
-    res.status(201).json({ category: await saveBlogCategory(req.body) });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.post(
+  "/admin/blog-categories",
+  ...cmsManage,
+  validateRequest({ body: blogCategorySchema }),
+  async (req, res, next) => {
+    try {
+      res.status(201).json({ category: await saveBlogCategory(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 contentRouter.patch(
   "/admin/blog-categories/:id",
@@ -296,13 +345,18 @@ const authorSchema = z
   })
   .strict();
 
-contentRouter.post("/admin/blog-authors", ...cmsManage, validateRequest({ body: authorSchema }), async (req, res, next) => {
-  try {
-    res.status(201).json({ author: await saveBlogAuthor(req.body) });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.post(
+  "/admin/blog-authors",
+  ...cmsManage,
+  validateRequest({ body: authorSchema }),
+  async (req, res, next) => {
+    try {
+      res.status(201).json({ author: await saveBlogAuthor(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 contentRouter.patch(
   "/admin/blog-authors/:id",
@@ -326,7 +380,17 @@ const verificationSchema = z
     pinterest: z.string().trim().max(200).optional(),
     yandex: z.string().trim().max(200).optional(),
     other: z
-      .array(z.object({ name: z.string().trim().regex(/^[a-z0-9:_-]{2,60}$/i), content: z.string().trim().max(300) }).strict())
+      .array(
+        z
+          .object({
+            name: z
+              .string()
+              .trim()
+              .regex(/^[a-z0-9:_-]{2,60}$/i),
+            content: z.string().trim().max(300),
+          })
+          .strict(),
+      )
       .max(10)
       .optional(),
   })
@@ -348,14 +412,31 @@ const seoSettingsSchema = z
     baseUrl: z.string().trim().url().optional().or(z.literal("")),
     defaultOgImage: mediaSchema.optional(),
     defaultTwitterImage: mediaSchema.optional(),
-    twitterHandle: z.string().trim().regex(/^@?[A-Za-z0-9_]{0,15}$/).optional().or(z.literal("")),
+    twitterHandle: z
+      .string()
+      .trim()
+      .regex(/^@?[A-Za-z0-9_]{0,15}$/)
+      .optional()
+      .or(z.literal("")),
     facebookAppId: z.string().trim().regex(/^\d*$/).optional(),
-    locale: z.string().trim().regex(/^[a-z]{2}_[A-Z]{2}$/).optional(),
+    locale: z
+      .string()
+      .trim()
+      .regex(/^[a-z]{2}_[A-Z]{2}$/)
+      .optional(),
     verification: verificationSchema.optional(),
     robots: z
       .object({
         indexSite: z.boolean().optional(),
-        extraDisallow: z.array(z.string().trim().regex(/^\/[^\s]*$/, "Disallow paths must start with /")).max(30).optional(),
+        extraDisallow: z
+          .array(
+            z
+              .string()
+              .trim()
+              .regex(/^\/[^\s]*$/, "Disallow paths must start with /"),
+          )
+          .max(30)
+          .optional(),
       })
       .strict()
       .optional(),
@@ -385,7 +466,10 @@ const seoSettingsSchema = z
       .array(
         z
           .object({
-            path: z.string().trim().regex(/^\/[a-z0-9/_-]*$/i),
+            path: z
+              .string()
+              .trim()
+              .regex(/^\/[a-z0-9/_-]*$/i),
             label: z.string().trim().max(80).optional(),
             seo: seoInputSchema,
           })
@@ -404,14 +488,19 @@ contentRouter.get("/admin/seo", ...seoManage, async (_req, res, next) => {
   }
 });
 
-contentRouter.put("/admin/seo", ...seoManage, validateRequest({ body: seoSettingsSchema }), async (req, res, next) => {
-  try {
-    await updateSeoSettings(req.body, req.user!.id);
-    res.json(await getAdminSeoSettings());
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.put(
+  "/admin/seo",
+  ...seoManage,
+  validateRequest({ body: seoSettingsSchema }),
+  async (req, res, next) => {
+    try {
+      await updateSeoSettings(req.body, req.user!.id);
+      res.json(await getAdminSeoSettings());
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 contentRouter.get("/admin/seo/audit", ...seoManage, async (_req, res, next) => {
   try {
@@ -438,13 +527,20 @@ contentRouter.get("/admin/redirects", ...seoManage, async (_req, res, next) => {
   }
 });
 
-contentRouter.post("/admin/redirects", ...seoManage, validateRequest({ body: redirectSchema }), async (req, res, next) => {
-  try {
-    res.status(201).json({ redirect: await createRedirect({ ...req.body, createdBy: req.user!.id }) });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.post(
+  "/admin/redirects",
+  ...seoManage,
+  validateRequest({ body: redirectSchema }),
+  async (req, res, next) => {
+    try {
+      res
+        .status(201)
+        .json({ redirect: await createRedirect({ ...req.body, createdBy: req.user!.id }) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 contentRouter.patch(
   "/admin/redirects/:id",
@@ -459,11 +555,16 @@ contentRouter.patch(
   },
 );
 
-contentRouter.delete("/admin/redirects/:id", ...seoManage, validateRequest({ params: idParams }), async (req, res, next) => {
-  try {
-    await deleteRedirect(String(req.params.id));
-    res.json({ deleted: true });
-  } catch (error) {
-    next(error);
-  }
-});
+contentRouter.delete(
+  "/admin/redirects/:id",
+  ...seoManage,
+  validateRequest({ params: idParams }),
+  async (req, res, next) => {
+    try {
+      await deleteRedirect(String(req.params.id));
+      res.json({ deleted: true });
+    } catch (error) {
+      next(error);
+    }
+  },
+);

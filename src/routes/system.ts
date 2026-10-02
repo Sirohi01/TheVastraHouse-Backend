@@ -3,8 +3,17 @@ import { requireAnyPermission, requireAuth } from "../middleware/authMiddleware.
 import { AppError } from "../middleware/errorHandler.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { PaymentWebhookEvent } from "../models/PaymentWebhookEvent.js";
-import { applyTrackingUpdate, parseShiprocketWebhook, verifyShiprocketWebhook } from "../services/courierService.js";
-import { getJobStatuses, listRegisteredJobs, runJobOnce, verifyCronSecret } from "../services/schedulerService.js";
+import {
+  applyTrackingUpdate,
+  parseShiprocketWebhook,
+  verifyShiprocketWebhook,
+} from "../services/courierService.js";
+import {
+  getJobStatuses,
+  listRegisteredJobs,
+  runJobOnce,
+  verifyCronSecret,
+} from "../services/schedulerService.js";
 import { logger } from "../utils/logger.js";
 
 export const systemRouter = Router();
@@ -22,7 +31,10 @@ systemRouter.post(
         throw new AppError("Invalid cron secret", 401);
       }
 
-      const requested = typeof req.query.job === "string" ? [req.query.job] : listRegisteredJobs().map((job) => job.name);
+      const requested =
+        typeof req.query.job === "string"
+          ? [req.query.job]
+          : listRegisteredJobs().map((job) => job.name);
       const results: Record<string, unknown> = {};
 
       for (const name of requested) {

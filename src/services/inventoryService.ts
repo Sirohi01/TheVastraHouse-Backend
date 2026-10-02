@@ -545,7 +545,6 @@ async function evaluateLowStockAlert(ledger: {
   return result.modifiedCount > 0 ? "resolved" : "ignored";
 }
 
-
 function snapshot(value: Partial<StockState>) {
   return pickStockState(value);
 }

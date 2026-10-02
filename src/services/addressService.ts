@@ -27,7 +27,9 @@ export async function addAddress(userId: string, input: AddressInput) {
     throw new AppError("User not found", 404);
   }
 
-  const addresses = user.addresses as unknown as StoredAddress[] & { push: (value: unknown) => void };
+  const addresses = user.addresses as unknown as StoredAddress[] & {
+    push: (value: unknown) => void;
+  };
 
   if (addresses.length >= MAX_ADDRESSES) {
     throw new AppError(`You can save up to ${MAX_ADDRESSES} addresses`, 400);

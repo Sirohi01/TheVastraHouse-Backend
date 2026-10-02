@@ -111,10 +111,28 @@ authRouter.post(
       .object({
         email: emailSchema,
         password: passwordSchema,
-        firstName: z.string().trim().min(1).max(80).optional().or(z.literal("").transform(() => undefined)),
-        lastName: z.string().trim().min(1).max(80).optional().or(z.literal("").transform(() => undefined)),
+        firstName: z
+          .string()
+          .trim()
+          .min(1)
+          .max(80)
+          .optional()
+          .or(z.literal("").transform(() => undefined)),
+        lastName: z
+          .string()
+          .trim()
+          .min(1)
+          .max(80)
+          .optional()
+          .or(z.literal("").transform(() => undefined)),
         phone: phoneSchema.optional().or(z.literal("").transform(() => undefined)),
-        referralCode: z.string().trim().min(3).max(40).optional().or(z.literal("").transform(() => undefined)),
+        referralCode: z
+          .string()
+          .trim()
+          .min(3)
+          .max(40)
+          .optional()
+          .or(z.literal("").transform(() => undefined)),
         marketingConsent: z.boolean().optional(),
       })
       .strict(),
@@ -133,9 +151,7 @@ authRouter.post(
         firstName: req.body.firstName,
         lastName: req.body.lastName,
         marketingConsentAt: req.body.marketingConsent ? new Date() : undefined,
-        notificationPreferences: req.body.marketingConsent
-          ? { marketingEmail: true }
-          : undefined,
+        notificationPreferences: req.body.marketingConsent ? { marketingEmail: true } : undefined,
         passwordHash,
         phone: req.body.phone,
         type: "customer",
@@ -228,7 +244,10 @@ authRouter.post(
       .object({
         email: emailSchema,
         password: loginPasswordSchema,
-        totpToken: z.string().regex(/^\d{6}$/).optional(),
+        totpToken: z
+          .string()
+          .regex(/^\d{6}$/)
+          .optional(),
       })
       .strict(),
   }),
@@ -248,16 +267,29 @@ authRouter.post(
       }
 
       if (user.status !== "active" || user.deactivatedAt) {
-        await recordAdminLogin(user.email, false, "inactive", ipAddress, userAgent, user._id, user.type);
+        await recordAdminLogin(
+          user.email,
+          false,
+          "inactive",
+          ipAddress,
+          userAgent,
+          user._id,
+          user.type,
+        );
         throw new AppError("This account is inactive. Contact support for help.", 403);
       }
 
       if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
-        await recordAdminLogin(user.email, false, "locked", ipAddress, userAgent, user._id, user.type);
-        throw new AppError(
-          "Too many failed attempts. Your account is locked for 15 minutes.",
-          423,
+        await recordAdminLogin(
+          user.email,
+          false,
+          "locked",
+          ipAddress,
+          userAgent,
+          user._id,
+          user.type,
         );
+        throw new AppError("Too many failed attempts. Your account is locked for 15 minutes.", 423);
       }
 
       const passwordValid = await verifyPassword(req.body.password, user.passwordHash);
@@ -269,11 +301,23 @@ authRouter.post(
           user.failedLoginCount = 0;
         }
         await user.save();
-        await recordAdminLogin(user.email, false, "bad-password", ipAddress, userAgent, user._id, user.type);
+        await recordAdminLogin(
+          user.email,
+          false,
+          "bad-password",
+          ipAddress,
+          userAgent,
+          user._id,
+          user.type,
+        );
         throw new AppError("Invalid email or password", 401);
       }
 
-      if (user.type === "customer" && !user.emailVerifiedAt && (await isEmailVerificationRequired())) {
+      if (
+        user.type === "customer" &&
+        !user.emailVerifiedAt &&
+        (await isEmailVerificationRequired())
+      ) {
         res.status(403).json({
           error: {
             code: "EMAIL_NOT_VERIFIED",
@@ -301,12 +345,21 @@ authRouter.post(
 
           if (needsSetup) {
             const enrolment = await sendTotpEnrolmentCode(user._id, user.email);
-            await recordAdminLogin(user.email, false, "2fa-setup-required", ipAddress, userAgent, user._id, user.type);
+            await recordAdminLogin(
+              user.email,
+              false,
+              "2fa-setup-required",
+              ipAddress,
+              userAgent,
+              user._id,
+              user.type,
+            );
             res.status(403).json({
               ...challenge,
               error: {
                 code: "ADMIN_2FA_SETUP_REQUIRED",
-                message: "Two-factor authentication is required. Enter the setup code we emailed you.",
+                message:
+                  "Two-factor authentication is required. Enter the setup code we emailed you.",
               },
               resendAfterSeconds: enrolment.retryAfterSeconds,
               ...(exposeDevTokens() && enrolment.code ? { devOnlyEmailCode: enrolment.code } : {}),
@@ -316,13 +369,24 @@ authRouter.post(
 
           res.status(401).json({
             ...challenge,
-            error: { code: "ADMIN_TOTP_REQUIRED", message: "Enter the 6-digit code from your authenticator app." },
+            error: {
+              code: "ADMIN_TOTP_REQUIRED",
+              message: "Enter the 6-digit code from your authenticator app.",
+            },
           });
           return;
         }
 
         if (!(await verifyTotp(req.body.totpToken, user.totpSecret!))) {
-          await recordAdminLogin(user.email, false, "bad-totp", ipAddress, userAgent, user._id, user.type);
+          await recordAdminLogin(
+            user.email,
+            false,
+            "bad-totp",
+            ipAddress,
+            userAgent,
+            user._id,
+            user.type,
+          );
           throw new AppError("The authenticator code is incorrect", 401);
         }
       }
@@ -339,7 +403,15 @@ authRouter.post(
         await mergeGuestCartIntoUserCart(guestSessionId, String(user._id));
       }
 
-      await recordAdminLogin(user.email, true, undefined, ipAddress, userAgent, user._id, user.type);
+      await recordAdminLogin(
+        user.email,
+        true,
+        undefined,
+        ipAddress,
+        userAgent,
+        user._id,
+        user.type,
+      );
 
       res.json({ ...session, user: serializeUser(user) });
     } catch (error) {
@@ -391,12 +463,18 @@ authRouter.post(
         );
 
         if (!enrolment) {
-          await rejectChallengeAttempt(challenge._id, "The email code is incorrect or has expired.");
+          await rejectChallengeAttempt(
+            challenge._id,
+            "The email code is incorrect or has expired.",
+          );
         }
 
         user.totpSecret = createTotpSecret(user.email).secret;
         await user.save();
-        await AuthToken.updateOne({ _id: challenge._id }, { $set: { "metadata.emailVerified": true } });
+        await AuthToken.updateOne(
+          { _id: challenge._id },
+          { $set: { "metadata.emailVerified": true } },
+        );
       }
 
       const otpauthUrl = buildTotpUri(user.email, user.totpSecret!);
@@ -419,7 +497,9 @@ authRouter.post(
   "/admin/totp/enable",
   adminChallengeLimit,
   validateRequest({
-    body: z.object({ challengeToken: challengeTokenSchema, totpToken: sixDigitCodeSchema }).strict(),
+    body: z
+      .object({ challengeToken: challengeTokenSchema, totpToken: sixDigitCodeSchema })
+      .strict(),
   }),
   async (req, res, next) => {
     try {
@@ -455,18 +535,32 @@ authRouter.post(
   "/admin/login/verify",
   adminChallengeLimit,
   validateRequest({
-    body: z.object({ challengeToken: challengeTokenSchema, totpToken: sixDigitCodeSchema }).strict(),
+    body: z
+      .object({ challengeToken: challengeTokenSchema, totpToken: sixDigitCodeSchema })
+      .strict(),
   }),
   async (req, res, next) => {
     try {
       const { challenge, user } = await loadAdminChallenge(req.body.challengeToken);
 
       if (!user.totpEnabled || !user.totpSecret) {
-        throw new AppError("Two-factor setup is not complete. Sign in again.", 409, ADMIN_CHALLENGE_EXPIRED);
+        throw new AppError(
+          "Two-factor setup is not complete. Sign in again.",
+          409,
+          ADMIN_CHALLENGE_EXPIRED,
+        );
       }
 
       if (!(await verifyTotp(req.body.totpToken, user.totpSecret))) {
-        await recordAdminLogin(user.email, false, "bad-totp", req.ip, req.header("User-Agent"), user._id, user.type);
+        await recordAdminLogin(
+          user.email,
+          false,
+          "bad-totp",
+          req.ip,
+          req.header("User-Agent"),
+          user._id,
+          user.type,
+        );
         await rejectChallengeAttempt(challenge._id, "The authenticator code is incorrect.");
       }
 
@@ -487,7 +581,11 @@ authRouter.post(
       const { user } = await loadAdminChallenge(req.body.challengeToken);
 
       if (user.totpEnabled) {
-        throw new AppError("Two-factor authentication is already enabled.", 409, ADMIN_CHALLENGE_EXPIRED);
+        throw new AppError(
+          "Two-factor authentication is already enabled.",
+          409,
+          ADMIN_CHALLENGE_EXPIRED,
+        );
       }
 
       const enrolment = await sendTotpEnrolmentCode(user._id, user.email);
@@ -721,7 +819,10 @@ authRouter.post(
         const wait = Math.ceil(
           (recent.createdAt.getTime() + OTP_RESEND_COOLDOWN_SECONDS * 1000 - Date.now()) / 1000,
         );
-        throw new AppError(`Please wait ${Math.max(1, wait)} seconds before requesting a new code`, 429);
+        throw new AppError(
+          `Please wait ${Math.max(1, wait)} seconds before requesting a new code`,
+          429,
+        );
       }
 
       const user = await User.findOne({ email: target }).select("_id type status").lean();
@@ -806,7 +907,9 @@ authRouter.post(
         await otp.save();
         const remaining = Math.max(0, OTP_MAX_ATTEMPTS - otp.attempts);
         throw new AppError(
-          remaining ? `Incorrect code. ${remaining} attempt(s) left.` : "Too many incorrect attempts. Request a new code.",
+          remaining
+            ? `Incorrect code. ${remaining} attempt(s) left.`
+            : "Too many incorrect attempts. Request a new code.",
           400,
         );
       }
@@ -1002,7 +1105,12 @@ async function completeOtpPurpose(
 }
 
 async function issueSession(
-  user: { _id: unknown; type: "customer" | "admin"; roleSlug?: string; customerType?: "retail" | "wholesale" },
+  user: {
+    _id: unknown;
+    type: "customer" | "admin";
+    roleSlug?: string;
+    customerType?: "retail" | "wholesale";
+  },
   req: Request,
 ) {
   const accessToken = signAccessToken({
@@ -1144,7 +1252,13 @@ async function loadAdminChallenge(challengeToken: string) {
 
   const user = await User.findById(challenge.userId).select("+totpSecret");
 
-  if (!user || user.type !== "admin" || user.status !== "active" || user.deactivatedAt || user.anonymizedAt) {
+  if (
+    !user ||
+    user.type !== "admin" ||
+    user.status !== "active" ||
+    user.deactivatedAt ||
+    user.anonymizedAt
+  ) {
     await consumeAdminChallenge(challenge._id);
     throw adminChallengeExpired();
   }
@@ -1187,7 +1301,9 @@ async function consumeAdminChallenge(challengeId: unknown) {
 }
 
 async function completeAdminLogin(
-  user: InstanceType<typeof User> & Parameters<typeof serializeUser>[0] & Parameters<typeof issueSession>[0],
+  user: InstanceType<typeof User> &
+    Parameters<typeof serializeUser>[0] &
+    Parameters<typeof issueSession>[0],
   req: Request,
 ) {
   user.failedLoginCount = 0;
@@ -1196,7 +1312,15 @@ async function completeAdminLogin(
   await user.save();
 
   const session = await issueSession(user, req);
-  await recordAdminLogin(user.email, true, undefined, req.ip, req.header("User-Agent"), user._id, user.type);
+  await recordAdminLogin(
+    user.email,
+    true,
+    undefined,
+    req.ip,
+    req.header("User-Agent"),
+    user._id,
+    user.type,
+  );
   return { ...session, user: serializeUser(user) };
 }
 

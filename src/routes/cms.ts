@@ -196,8 +196,11 @@ function isSlideLive(slide: ScheduledSlide, now: Date) {
 /** Storefront only receives banners that are enabled and inside their scheduled window. */
 function applyContentSchedule(content: Record<string, unknown>) {
   const now = new Date();
-  const home = content.home as { hero?: { slides?: ScheduledSlide[] }; story?: ScheduledSlide } | undefined;
-  const filterSlides = (slides?: ScheduledSlide[]) => slides?.filter((slide) => isSlideLive(slide, now));
+  const home = content.home as
+    | { hero?: { slides?: ScheduledSlide[] }; story?: ScheduledSlide }
+    | undefined;
+  const filterSlides = (slides?: ScheduledSlide[]) =>
+    slides?.filter((slide) => isSlideLive(slide, now));
 
   return {
     ...content,
@@ -215,7 +218,9 @@ function applyContentSchedule(content: Record<string, unknown>) {
 
 function withLivePromo(section: Record<string, unknown> | undefined, now: Date) {
   if (!section?.promo) return section;
-  return isSlideLive(section.promo as ScheduledSlide, now) ? section : { ...section, promo: undefined };
+  return isSlideLive(section.promo as ScheduledSlide, now)
+    ? section
+    : { ...section, promo: undefined };
 }
 
 cmsRouter.get(

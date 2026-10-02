@@ -4,7 +4,11 @@ const giftCardTransactionSchema = new Schema(
   {
     giftCardId: { type: Schema.Types.ObjectId, ref: "GiftCard", required: true, index: true },
     code: { type: String, required: true, trim: true, uppercase: true },
-    type: { type: String, enum: ["issue", "redeem", "restore", "adjust", "expire"], required: true },
+    type: {
+      type: String,
+      enum: ["issue", "redeem", "restore", "adjust", "expire"],
+      required: true,
+    },
     amount: { type: Number, required: true },
     balanceAfter: { type: Number, required: true, min: 0 },
     orderNumber: { type: String, trim: true, index: true },

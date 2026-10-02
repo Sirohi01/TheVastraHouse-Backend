@@ -176,7 +176,9 @@ export async function getDefaultWarehouse() {
     return existing as { _id: Types.ObjectId };
   }
 
-  let brand = (await Brand.findOne({}).sort({ createdAt: 1 }).lean()) as unknown as { _id: Types.ObjectId } | null;
+  let brand = (await Brand.findOne({}).sort({ createdAt: 1 }).lean()) as unknown as {
+    _id: Types.ObjectId;
+  } | null;
 
   if (!brand) {
     brand = (await Brand.create({ name: "The Vastra House", slug: "the-vastra-house" })).toObject();
@@ -201,9 +203,7 @@ export async function ensureLedgersForVariants(
   variants: Array<{ sku: string; initialStock?: number; stockPlaceholder?: number }>,
 ) {
   const skus = variants.map((variant) => variant.sku.toUpperCase());
-  const existing = new Set(
-    (await StockLedger.distinct("sku", { sku: { $in: skus } })) as string[],
-  );
+  const existing = new Set((await StockLedger.distinct("sku", { sku: { $in: skus } })) as string[]);
   const missing = variants.filter((variant) => !existing.has(variant.sku.toUpperCase()));
 
   if (!missing.length) {
@@ -248,7 +248,10 @@ export async function mergeVariantsPreservingIds(
   const merged: VariantLike[] = incoming.map((variant) => {
     const match =
       (variant._id && existing.find((item) => String(item._id) === String(variant._id))) ||
-      existing.find((item) => item.sku.toUpperCase() === variant.sku.toUpperCase() && !usedIds.has(String(item._id)));
+      existing.find(
+        (item) =>
+          item.sku.toUpperCase() === variant.sku.toUpperCase() && !usedIds.has(String(item._id)),
+      );
 
     if (match) {
       usedIds.add(String(match._id));

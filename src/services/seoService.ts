@@ -61,17 +61,25 @@ async function loadSettings(): Promise<SeoSettingsDoc> {
  * values, so the storefront always receives complete metadata inputs.
  */
 export async function getPublicSeoSettings() {
-  const [settings, siteName, defaultTitle, defaultDescription, defaultOgImage, twitterHandle, logoUrl, robotsExtraDisallow] =
-    await Promise.all([
-      loadSettings(),
-      getRuntimeSetting("SEO_SITE_NAME"),
-      getRuntimeSetting("SEO_DEFAULT_TITLE"),
-      getRuntimeSetting("SEO_DEFAULT_DESCRIPTION"),
-      getRuntimeSetting("SEO_DEFAULT_OG_IMAGE"),
-      getRuntimeSetting("SEO_TWITTER_HANDLE"),
-      getRuntimeSetting("SEO_ORGANIZATION_LOGO_URL"),
-      getRuntimeSetting("SEO_ROBOTS_EXTRA_DISALLOW"),
-    ]);
+  const [
+    settings,
+    siteName,
+    defaultTitle,
+    defaultDescription,
+    defaultOgImage,
+    twitterHandle,
+    logoUrl,
+    robotsExtraDisallow,
+  ] = await Promise.all([
+    loadSettings(),
+    getRuntimeSetting("SEO_SITE_NAME"),
+    getRuntimeSetting("SEO_DEFAULT_TITLE"),
+    getRuntimeSetting("SEO_DEFAULT_DESCRIPTION"),
+    getRuntimeSetting("SEO_DEFAULT_OG_IMAGE"),
+    getRuntimeSetting("SEO_TWITTER_HANDLE"),
+    getRuntimeSetting("SEO_ORGANIZATION_LOGO_URL"),
+    getRuntimeSetting("SEO_ROBOTS_EXTRA_DISALLOW"),
+  ]);
   const resolvedSiteName = settings.siteName || siteName || env.SEO_SITE_NAME;
   const ogImageUrl = settings.defaultOgImage?.url || defaultOgImage || env.SEO_DEFAULT_OG_IMAGE;
   const logo = settings.organization?.logo?.url || logoUrl || env.SEO_ORGANIZATION_LOGO_URL;
@@ -80,13 +88,17 @@ export async function getPublicSeoSettings() {
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const ga4MeasurementId = (await getRuntimeSetting("GA4_MEASUREMENT_ID")) || env.GA4_MEASUREMENT_ID;
+  const ga4MeasurementId =
+    (await getRuntimeSetting("GA4_MEASUREMENT_ID")) || env.GA4_MEASUREMENT_ID;
 
   return {
-    analytics: { ga4MeasurementId: /^G-[A-Z0-9]{4,}$/.test(ga4MeasurementId) ? ga4MeasurementId : "" },
+    analytics: {
+      ga4MeasurementId: /^G-[A-Z0-9]{4,}$/.test(ga4MeasurementId) ? ga4MeasurementId : "",
+    },
     baseUrl: (settings.baseUrl || env.FRONTEND_PUBLIC_URL).replace(/\/$/, ""),
     brandName: settings.brandName || resolvedSiteName,
-    defaultDescription: settings.defaultDescription || defaultDescription || env.SEO_DEFAULT_DESCRIPTION,
+    defaultDescription:
+      settings.defaultDescription || defaultDescription || env.SEO_DEFAULT_DESCRIPTION,
     defaultKeywords: settings.defaultKeywords ?? [],
     defaultOgImage: ogImageUrl,
     defaultOgImageAlt: settings.defaultOgImage?.altText || resolvedSiteName,
@@ -108,7 +120,11 @@ export async function getPublicSeoSettings() {
     },
     // Kept for older clients.
     organizationLogoUrl: logo,
-    pages: (settings.pages ?? []).map((page) => ({ label: page.label, path: page.path, seo: page.seo ?? {} })),
+    pages: (settings.pages ?? []).map((page) => ({
+      label: page.label,
+      path: page.path,
+      seo: page.seo ?? {},
+    })),
     robots: {
       extraDisallow: [...new Set([...(settings.robots?.extraDisallow ?? []), ...legacyDisallow])],
       indexSite: settings.robots?.indexSite !== false,
@@ -185,11 +201,21 @@ type AuditEntity = {
 export async function runSeoAudit() {
   const settings = await getPublicSeoSettings();
   const [products, categories, collections, posts, pages] = (await Promise.all([
-    Product.find({ active: true, status: { $ne: "deleted" } }).select("name slug description seo media variants.media").lean(),
-    Category.find({ active: true, status: { $ne: "deleted" } }).select("name slug description seo banner").lean(),
-    Collection.find({ active: true, status: { $ne: "deleted" } }).select("name slug description seo banner").lean(),
-    BlogPost.find({ postStatus: "published", status: { $ne: "deleted" } }).select("title slug excerpt content seo featuredImage").lean(),
-    CmsPage.find({ pageStatus: "published", status: { $ne: "deleted" } }).select("title slug summary body seo heroImage kind").lean(),
+    Product.find({ active: true, status: { $ne: "deleted" } })
+      .select("name slug description seo media variants.media")
+      .lean(),
+    Category.find({ active: true, status: { $ne: "deleted" } })
+      .select("name slug description seo banner")
+      .lean(),
+    Collection.find({ active: true, status: { $ne: "deleted" } })
+      .select("name slug description seo banner")
+      .lean(),
+    BlogPost.find({ postStatus: "published", status: { $ne: "deleted" } })
+      .select("title slug excerpt content seo featuredImage")
+      .lean(),
+    CmsPage.find({ pageStatus: "published", status: { $ne: "deleted" } })
+      .select("title slug summary body seo heroImage kind")
+      .lean(),
   ])) as unknown as AuditEntity[][];
   const issues: AuditIssue[] = [];
   const titles = new Map<string, string[]>();
@@ -203,7 +229,15 @@ export async function runSeoAudit() {
   ];
 
   if (!settings.defaultOgImage) {
-    issues.push({ code: "missing_default_og_image", entityId: "global", entityType: "page", message: "No global default social sharing image is configured.", name: "Global SEO", path: "/admin/seo", severity: "error" });
+    issues.push({
+      code: "missing_default_og_image",
+      entityId: "global",
+      entityType: "page",
+      message: "No global default social sharing image is configured.",
+      name: "Global SEO",
+      path: "/admin/seo",
+      severity: "error",
+    });
   }
 
   for (const group of groups) {
@@ -211,7 +245,15 @@ export async function runSeoAudit() {
       const name = item.name ?? item.title ?? item.slug;
       const path = `${group.prefix}${item.slug}`;
       const add = (severity: AuditIssue["severity"], code: string, message: string) =>
-        issues.push({ code, entityId: String(item._id), entityType: group.type, message, name, path, severity });
+        issues.push({
+          code,
+          entityId: String(item._id),
+          entityType: group.type,
+          message,
+          name,
+          path,
+          severity,
+        });
       const effectiveTitle = (item.seo?.title || name).trim();
       const fallbackDescription = htmlToPlainText(
         item.description ?? item.excerpt ?? item.summary ?? item.content ?? item.body ?? "",
@@ -223,34 +265,70 @@ export async function runSeoAudit() {
         continue;
       }
 
-      if (!item.seo?.title) add("info", "title_fallback", `No custom SEO title; using "${effectiveTitle}".`);
-      if (effectiveTitle.length > TITLE_LIMITS.max) add("warning", "title_too_long", `Title is ${effectiveTitle.length} characters (aim for under ${TITLE_LIMITS.max}).`);
-      if (effectiveTitle.length < 10) add("warning", "title_too_short", `Title "${effectiveTitle}" is very short.`);
+      if (!item.seo?.title)
+        add("info", "title_fallback", `No custom SEO title; using "${effectiveTitle}".`);
+      if (effectiveTitle.length > TITLE_LIMITS.max)
+        add(
+          "warning",
+          "title_too_long",
+          `Title is ${effectiveTitle.length} characters (aim for under ${TITLE_LIMITS.max}).`,
+        );
+      if (effectiveTitle.length < 10)
+        add("warning", "title_too_short", `Title "${effectiveTitle}" is very short.`);
 
       if (!effectiveDescription) {
-        add("error", "missing_description", "No meta description and no description text to fall back on.");
+        add(
+          "error",
+          "missing_description",
+          "No meta description and no description text to fall back on.",
+        );
       } else {
-        if (!item.seo?.description) add("info", "description_fallback", "No custom meta description; the page text is used.");
-        if (item.seo?.description && item.seo.description.length > DESCRIPTION_LIMITS.max) add("warning", "description_too_long", `Meta description is ${item.seo.description.length} characters (aim for ${DESCRIPTION_LIMITS.min}-${DESCRIPTION_LIMITS.max}).`);
-        if (item.seo?.description && item.seo.description.length < DESCRIPTION_LIMITS.min) add("warning", "description_too_short", `Meta description is only ${item.seo.description.length} characters.`);
+        if (!item.seo?.description)
+          add("info", "description_fallback", "No custom meta description; the page text is used.");
+        if (item.seo?.description && item.seo.description.length > DESCRIPTION_LIMITS.max)
+          add(
+            "warning",
+            "description_too_long",
+            `Meta description is ${item.seo.description.length} characters (aim for ${DESCRIPTION_LIMITS.min}-${DESCRIPTION_LIMITS.max}).`,
+          );
+        if (item.seo?.description && item.seo.description.length < DESCRIPTION_LIMITS.min)
+          add(
+            "warning",
+            "description_too_short",
+            `Meta description is only ${item.seo.description.length} characters.`,
+          );
       }
 
       const images = [
         ...(item.media ?? []),
-        ...((item.variants ?? []).flatMap((variant) => variant.media ?? [])),
+        ...(item.variants ?? []).flatMap((variant) => variant.media ?? []),
         item.banner,
         item.featuredImage,
         item.heroImage,
         item.seo?.ogImage,
       ].filter((media): media is MediaRef => Boolean(media?.url));
 
-      if (!images.length && group.type !== "page") add("warning", "missing_image", "No image: social previews will use the global default image.");
+      if (!images.length && group.type !== "page")
+        add(
+          "warning",
+          "missing_image",
+          "No image: social previews will use the global default image.",
+        );
       for (const image of images) {
-        if (!image.altText || image.altText.trim().length < 3) add("warning", "missing_alt", `Image ${image.url} has no meaningful alt text.`);
+        if (!image.altText || image.altText.trim().length < 3)
+          add("warning", "missing_alt", `Image ${image.url} has no meaningful alt text.`);
       }
 
-      if (item.seo?.canonicalUrl && !item.seo.canonicalUrl.startsWith("/") && !item.seo.canonicalUrl.startsWith(settings.baseUrl)) {
-        add("warning", "external_canonical", `Canonical points to another site (${item.seo.canonicalUrl}).`);
+      if (
+        item.seo?.canonicalUrl &&
+        !item.seo.canonicalUrl.startsWith("/") &&
+        !item.seo.canonicalUrl.startsWith(settings.baseUrl)
+      ) {
+        add(
+          "warning",
+          "external_canonical",
+          `Canonical points to another site (${item.seo.canonicalUrl}).`,
+        );
       }
 
       const titleKey = effectiveTitle.toLowerCase();
@@ -264,13 +342,29 @@ export async function runSeoAudit() {
 
   for (const [title, paths] of titles) {
     if (paths.length > 1) {
-      issues.push({ code: "duplicate_title", entityId: paths.join(","), entityType: "page", message: `${paths.length} pages share the title "${title}": ${paths.join(", ")}`, name: title, path: paths[0], severity: "warning" });
+      issues.push({
+        code: "duplicate_title",
+        entityId: paths.join(","),
+        entityType: "page",
+        message: `${paths.length} pages share the title "${title}": ${paths.join(", ")}`,
+        name: title,
+        path: paths[0],
+        severity: "warning",
+      });
     }
   }
 
   for (const [description, paths] of descriptions) {
     if (paths.length > 1) {
-      issues.push({ code: "duplicate_description", entityId: paths.join(","), entityType: "page", message: `${paths.length} pages share the same meta description: ${paths.join(", ")}`, name: description.slice(0, 60), path: paths[0], severity: "warning" });
+      issues.push({
+        code: "duplicate_description",
+        entityId: paths.join(","),
+        entityType: "page",
+        message: `${paths.length} pages share the same meta description: ${paths.join(", ")}`,
+        name: description.slice(0, 60),
+        path: paths[0],
+        severity: "warning",
+      });
     }
   }
 
@@ -281,6 +375,10 @@ export async function runSeoAudit() {
     checked: groups.reduce((total, group) => total + group.items.length, 0),
     counts,
     generatedAt: new Date(),
-    issues: issues.sort((a, b) => ["error", "warning", "info"].indexOf(a.severity) - ["error", "warning", "info"].indexOf(b.severity)),
+    issues: issues.sort(
+      (a, b) =>
+        ["error", "warning", "info"].indexOf(a.severity) -
+        ["error", "warning", "info"].indexOf(b.severity),
+    ),
   };
 }

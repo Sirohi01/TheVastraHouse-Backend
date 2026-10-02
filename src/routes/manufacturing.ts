@@ -258,7 +258,11 @@ manufacturingRouter.post(
   async (req, res, next) => {
     try {
       res.json({
-        productionOrder: await cancelProductionOrder(String(req.params.id), req.user!.id, req.body.reason),
+        productionOrder: await cancelProductionOrder(
+          String(req.params.id),
+          req.user!.id,
+          req.body.reason,
+        ),
       });
     } catch (error) {
       next(error);

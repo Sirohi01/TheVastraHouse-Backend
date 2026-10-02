@@ -213,7 +213,10 @@ export async function createBalancePaymentForOrder(input: {
   }
 
   if (session.method !== "razorpay" && !isCreditTerms) {
-    throw new AppError("Online payment is only supported for Razorpay and wholesale credit orders", 409);
+    throw new AppError(
+      "Online payment is only supported for Razorpay and wholesale credit orders",
+      409,
+    );
   }
 
   if (session.outstandingAmount <= 0) {
@@ -461,10 +464,16 @@ export async function recordOfflinePayment(input: {
 
   if (!session) throw new AppError("Payment session not found", 404);
   if (session.method !== "credit_terms") {
-    throw new AppError("Offline payments can only be recorded against wholesale credit orders", 409);
+    throw new AppError(
+      "Offline payments can only be recorded against wholesale credit orders",
+      409,
+    );
   }
   if (input.amount <= 0 || input.amount > session.outstandingAmount) {
-    throw new AppError(`Amount must be between 1 and the outstanding ${session.outstandingAmount}`, 400);
+    throw new AppError(
+      `Amount must be between 1 and the outstanding ${session.outstandingAmount}`,
+      400,
+    );
   }
 
   const applied = await captureOnce(session, input.amount, {

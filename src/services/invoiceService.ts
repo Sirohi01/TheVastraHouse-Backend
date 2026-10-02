@@ -355,19 +355,31 @@ export async function renderDocumentPdf(snapshot: PdfSnapshot) {
  */
 export function renderHtml(value: PdfSnapshot) {
   const money = (amount: unknown) => formatMoney(Number(amount ?? 0), value.currencyCode);
-  const buyer = (value.metadata ?? {}) as { buyerGstin?: string; buyerBusinessName?: string; paymentTerms?: string; dueAt?: string | Date };
+  const buyer = (value.metadata ?? {}) as {
+    buyerGstin?: string;
+    buyerBusinessName?: string;
+    paymentTerms?: string;
+    dueAt?: string | Date;
+  };
   const billing = (value.billingAddress ?? value.shippingAddress ?? {}) as AddressSnapshot;
   const shipping = (value.shippingAddress ?? {}) as AddressSnapshot;
   const placeOfSupply = billing.region || shipping.region || "";
   const intraState =
-    Boolean(value.company.state) && placeOfSupply.trim().toLowerCase() === String(value.company.state).trim().toLowerCase();
+    Boolean(value.company.state) &&
+    placeOfSupply.trim().toLowerCase() === String(value.company.state).trim().toLowerCase();
   const lines = value.lines
     .map(
       (line) =>
         `<tr><td>${escapeHtml(line.productName)}</td><td>${escapeHtml(line.sku)}</td><td>${escapeHtml(line.hsnCode ?? "-")}</td><td class="n">${line.quantity}</td><td class="n">${money(line.unitPrice)}</td><td class="n">${line.gstRate}%</td><td class="n">${money(line.lineTotal)}</td></tr>`,
     )
     .join("");
-  const taxRows = ((value.taxBreakdown ?? []) as Array<{ gstRate: number; taxableAmount: number; gstAmount: number }>)
+  const taxRows = (
+    (value.taxBreakdown ?? []) as Array<{
+      gstRate: number;
+      taxableAmount: number;
+      gstAmount: number;
+    }>
+  )
     .map((row) =>
       intraState
         ? `<tr><td>${row.gstRate}%</td><td class="n">${money(row.taxableAmount)}</td><td class="n">${money(row.gstAmount / 2)}</td><td class="n">${money(row.gstAmount / 2)}</td><td class="n">-</td></tr>`
@@ -388,7 +400,14 @@ export function renderHtml(value: PdfSnapshot) {
     .map(([label, amount]) => `<tr><td>${label}</td><td class="n">${money(amount)}</td></tr>`)
     .join("");
   const address = (entry: AddressSnapshot) =>
-    [entry.fullName, entry.company, entry.line1, entry.line2, [entry.city, entry.region, entry.postalCode].filter(Boolean).join(", "), entry.phone]
+    [
+      entry.fullName,
+      entry.company,
+      entry.line1,
+      entry.line2,
+      [entry.city, entry.region, entry.postalCode].filter(Boolean).join(", "),
+      entry.phone,
+    ]
       .filter(Boolean)
       .map((part) => escapeHtml(String(part)))
       .join("<br>");
@@ -405,12 +424,19 @@ ${taxRows ? `<table><thead><tr><th>GST rate</th><th class="n">Taxable value</th>
 async function accountEmail(userId: unknown) {
   if (!userId) return undefined;
   const { User } = await import("../models/User.js");
-  const user = (await User.findById(userId).select("email").lean()) as unknown as { email?: string } | null;
+  const user = (await User.findById(userId).select("email").lean()) as unknown as {
+    email?: string;
+  } | null;
   return user?.email;
 }
 
 async function buyerSnapshot(order: OrderSnapshot) {
-  const record = order as unknown as { userId?: unknown; customerType?: string; paymentTerms?: string; paymentSessionId?: unknown };
+  const record = order as unknown as {
+    userId?: unknown;
+    customerType?: string;
+    paymentTerms?: string;
+    paymentSessionId?: unknown;
+  };
   if (record.customerType !== "wholesale" || !record.userId) {
     return {};
   }
@@ -421,7 +447,9 @@ async function buyerSnapshot(order: OrderSnapshot) {
       wholesaleProfile?: { gstin?: string; businessName?: string };
     } | null>,
     record.paymentSessionId
-      ? (PaymentSession.findById(record.paymentSessionId).select("dueAt").lean() as unknown as Promise<{ dueAt?: Date } | null>)
+      ? (PaymentSession.findById(record.paymentSessionId)
+          .select("dueAt")
+          .lean() as unknown as Promise<{ dueAt?: Date } | null>)
       : Promise.resolve(null),
   ]);
   return {

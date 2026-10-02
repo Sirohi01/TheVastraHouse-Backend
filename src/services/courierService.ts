@@ -4,7 +4,11 @@ import { AppError } from "../middleware/errorHandler.js";
 import { Order } from "../models/Order.js";
 import { PaymentSession } from "../models/PaymentSession.js";
 import { logger } from "../utils/logger.js";
-import { recordOrderTimeline, transitionOrderDocument, type OrderStatus } from "./orderLifecycleService.js";
+import {
+  recordOrderTimeline,
+  transitionOrderDocument,
+  type OrderStatus,
+} from "./orderLifecycleService.js";
 import { getRuntimeSetting } from "./runtimeSettingsService.js";
 
 /**
@@ -45,7 +49,14 @@ type ShippableOrder = {
     phone?: string;
   };
   guestEmail?: string;
-  items: Array<{ productName: string; sku: string; quantity: number; unitPrice: number; hsnCode: string; gstRate: number }>;
+  items: Array<{
+    productName: string;
+    sku: string;
+    quantity: number;
+    unitPrice: number;
+    hsnCode: string;
+    gstRate: number;
+  }>;
   totals: { grandTotal: number; shippingFee: number; discountTotal: number };
 };
 
@@ -58,7 +69,11 @@ async function shiprocketCredentials() {
     getRuntimeSetting("SHIPROCKET_PASSWORD"),
     getRuntimeSetting("SHIPROCKET_PICKUP_LOCATION"),
   ]);
-  return { email: email || "", password: password || "", pickup: pickup || env.SHIPROCKET_PICKUP_LOCATION };
+  return {
+    email: email || "",
+    password: password || "",
+    pickup: pickup || env.SHIPROCKET_PICKUP_LOCATION,
+  };
 }
 
 async function shiprocketRequest<T>(path: string, body: unknown): Promise<T> {
@@ -107,10 +122,18 @@ async function shiprocketAuth() {
 }
 
 /** Builds the Shiprocket ad-hoc order. Secured-COD orders collect only the unpaid balance. */
-export function buildShiprocketOrder(order: ShippableOrder, outstanding: number, pickupLocation: string, email: string) {
+export function buildShiprocketOrder(
+  order: ShippableOrder,
+  outstanding: number,
+  pickupLocation: string,
+  email: string,
+) {
   const address = order.shippingAddress;
   if (!address?.postalCode || !address.phone) {
-    throw new AppError("Shipping address needs a PIN code and phone number for courier booking", 400);
+    throw new AppError(
+      "Shipping address needs a PIN code and phone number for courier booking",
+      400,
+    );
   }
 
   const itemTotal = order.items.reduce((total, item) => total + item.unitPrice * item.quantity, 0);
@@ -155,34 +178,47 @@ export function buildShiprocketOrder(order: ShippableOrder, outstanding: number,
 async function createShiprocketShipment(order: ShippableOrder): Promise<CreatedShipment> {
   const credentials = await shiprocketCredentials();
   const session = order.paymentSessionId
-    ? ((await PaymentSession.findById(order.paymentSessionId).select("outstandingAmount").lean()) as unknown as {
+    ? ((await PaymentSession.findById(order.paymentSessionId)
+        .select("outstandingAmount")
+        .lean()) as unknown as {
         outstandingAmount?: number;
       } | null)
     : null;
   const created = await shiprocketRequest<{ order_id?: number; shipment_id?: number }>(
     "/orders/create/adhoc",
-    buildShiprocketOrder(order, session?.outstandingAmount ?? 0, credentials.pickup, order.guestEmail ?? env.COMPANY_EMAIL),
+    buildShiprocketOrder(
+      order,
+      session?.outstandingAmount ?? 0,
+      credentials.pickup,
+      order.guestEmail ?? env.COMPANY_EMAIL,
+    ),
   );
 
   if (!created.shipment_id) {
     throw new AppError("Shiprocket did not return a shipment id", 502);
   }
 
-  const awb = await shiprocketRequest<{ response?: { data?: { awb_code?: string; courier_name?: string } } }>(
-    "/courier/assign/awb",
-    { shipment_id: created.shipment_id },
-  );
+  const awb = await shiprocketRequest<{
+    response?: { data?: { awb_code?: string; courier_name?: string } };
+  }>("/courier/assign/awb", { shipment_id: created.shipment_id });
   const awbCode = awb.response?.data?.awb_code;
 
   if (!awbCode) {
-    throw new AppError("Shiprocket could not assign an AWB. Try again or enter tracking manually.", 502);
+    throw new AppError(
+      "Shiprocket could not assign an AWB. Try again or enter tracking manually.",
+      502,
+    );
   }
 
   const label = await shiprocketRequest<{ label_url?: string }>("/courier/generate/label", {
     shipment_id: [created.shipment_id],
   });
-  await shiprocketRequest("/courier/generate/pickup", { shipment_id: [created.shipment_id] }).catch((error) =>
-    logger.warn({ error, orderNumber: order.orderNumber }, "Shiprocket pickup request failed; schedule manually"),
+  await shiprocketRequest("/courier/generate/pickup", { shipment_id: [created.shipment_id] }).catch(
+    (error) =>
+      logger.warn(
+        { error, orderNumber: order.orderNumber },
+        "Shiprocket pickup request failed; schedule manually",
+      ),
   );
 
   return {
@@ -208,13 +244,19 @@ export async function bookCourierShipment(orderId: string, actorId?: string) {
   const provider = await activeCourierProvider();
 
   if (provider === "manual") {
-    throw new AppError("No courier integration is enabled. Enter the carrier and AWB manually.", 409);
+    throw new AppError(
+      "No courier integration is enabled. Enter the carrier and AWB manually.",
+      409,
+    );
   }
 
   const order = await Order.findById(orderId);
   if (!order) throw new AppError("Order not found", 404);
   if (!["packed", "ready_to_dispatch"].includes(order.status)) {
-    throw new AppError("Courier booking is available once an order is packed or ready to dispatch", 409);
+    throw new AppError(
+      "Courier booking is available once an order is packed or ready to dispatch",
+      409,
+    );
   }
   if (order.shipment?.providerShipmentId) {
     throw new AppError("A courier shipment already exists for this order", 409);
@@ -222,7 +264,9 @@ export async function bookCourierShipment(orderId: string, actorId?: string) {
 
   const shipment = await createShiprocketShipment(order.toObject() as unknown as ShippableOrder);
   order.set("shipment", {
-    ...(order.shipment ? (order.shipment as { toObject?: () => object }).toObject?.() ?? order.shipment : {}),
+    ...(order.shipment
+      ? ((order.shipment as { toObject?: () => object }).toObject?.() ?? order.shipment)
+      : {}),
     ...shipment,
     courierStatus: "AWB_ASSIGNED",
     provider,
@@ -247,23 +291,27 @@ export function parseShiprocketWebhook(body: Record<string, unknown>): TrackingU
   const status = String(body.current_status ?? body.shipment_status ?? "").toUpperCase();
   const scans = Array.isArray(body.scans) ? (body.scans as Array<Record<string, unknown>>) : [];
   const latest = scans[scans.length - 1];
-  const mappedStatus = /DELIVERED/.test(status) && !/UNDELIVERED|RTO/.test(status)
-    ? "delivered"
-    : /PICKED|SHIPPED|IN TRANSIT|OUT FOR DELIVERY|REACHED/.test(status)
-      ? "shipped"
-      : undefined;
+  const mappedStatus =
+    /DELIVERED/.test(status) && !/UNDELIVERED|RTO/.test(status)
+      ? "delivered"
+      : /PICKED|SHIPPED|IN TRANSIT|OUT FOR DELIVERY|REACHED/.test(status)
+        ? "shipped"
+        : undefined;
 
   return {
     location: latest ? String(latest.location ?? "") : undefined,
     mappedStatus,
-    occurredAt: new Date(String(body.current_timestamp ?? latest?.date ?? new Date().toISOString())),
+    occurredAt: new Date(
+      String(body.current_timestamp ?? latest?.date ?? new Date().toISOString()),
+    ),
     status,
     trackingNumber,
   };
 }
 
 export async function verifyShiprocketWebhook(token: string | undefined) {
-  const expected = (await getRuntimeSetting("SHIPROCKET_WEBHOOK_TOKEN")) || env.SHIPROCKET_WEBHOOK_TOKEN;
+  const expected =
+    (await getRuntimeSetting("SHIPROCKET_WEBHOOK_TOKEN")) || env.SHIPROCKET_WEBHOOK_TOKEN;
   if (!expected || !token) return false;
   const a = Buffer.from(expected);
   const b = Buffer.from(token);
@@ -283,14 +331,26 @@ export async function applyTrackingUpdate(update: TrackingUpdate) {
 
   if (update.mappedStatus === "shipped" && ["packed", "ready_to_dispatch"].includes(order.status)) {
     if (order.status === "packed") {
-      await transitionOrderDocument(order as never, { actor: { actorType: "system" }, note: "Courier pickup", toStatus: "ready_to_dispatch" });
+      await transitionOrderDocument(order as never, {
+        actor: { actorType: "system" },
+        note: "Courier pickup",
+        toStatus: "ready_to_dispatch",
+      });
     }
-    await transitionOrderDocument(order as never, { actor: { actorType: "system" }, note: `Courier: ${update.status}`, toStatus: "shipped" });
+    await transitionOrderDocument(order as never, {
+      actor: { actorType: "system" },
+      note: `Courier: ${update.status}`,
+      toStatus: "shipped",
+    });
   }
 
   if (update.mappedStatus === "delivered" && order.status === "shipped") {
     order.set("shipment.deliveredAt", update.occurredAt);
-    await transitionOrderDocument(order as never, { actor: { actorType: "system" }, note: "Courier: delivered", toStatus: "delivered" });
+    await transitionOrderDocument(order as never, {
+      actor: { actorType: "system" },
+      note: "Courier: delivered",
+      toStatus: "delivered",
+    });
   }
 
   return { matched: true, orderNumber: order.orderNumber };

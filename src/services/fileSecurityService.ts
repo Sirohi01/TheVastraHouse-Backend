@@ -74,7 +74,15 @@ export function detectFileType(buffer: Buffer): DetectedFile | null {
 }
 
 // Markers are long enough that random compressed image bytes essentially never match them.
-const scriptMarkers = ["<script", "<?php", "<html", "javascript:", "<iframe", "onerror=", "onload="];
+const scriptMarkers = [
+  "<script",
+  "<?php",
+  "<html",
+  "javascript:",
+  "<iframe",
+  "onerror=",
+  "onload=",
+];
 
 // /OpenAction alone is common in benign PDFs (e.g. "open at page 1"), so it is not blocked.
 const dangerousPdfMarkers = ["/JavaScript", "/JS", "/Launch", "/EmbeddedFile", "/RichMedia"];
@@ -104,13 +112,18 @@ export function scanBufferForMalware(buffer: Buffer, detected?: DetectedFile | n
       throw new AppError("Image contains embedded script content and was rejected", 422);
     }
 
-    if (file.mimeType === "image/png" && !buffer.subarray(-12).toString("latin1").includes("IEND")) {
+    if (
+      file.mimeType === "image/png" &&
+      !buffer.subarray(-12).toString("latin1").includes("IEND")
+    ) {
       throw new AppError("PNG file is truncated or has trailing data", 422);
     }
   }
 
   if (file.mimeType === "application/pdf") {
-    const marker = dangerousPdfMarkers.find((item) => new RegExp(`${escapeRegex(item)}[\\s/<(\\[]`).test(text));
+    const marker = dangerousPdfMarkers.find((item) =>
+      new RegExp(`${escapeRegex(item)}[\\s/<(\\[]`).test(text),
+    );
 
     if (marker) {
       throw new AppError(`PDF contains active content (${marker}) and was rejected`, 422);

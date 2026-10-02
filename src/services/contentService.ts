@@ -43,20 +43,30 @@ const RESERVED_SLUGS = new Set([
 ]);
 
 export async function listPublishedPages(kind?: "policy" | "page") {
-  return CmsPage.find({ pageStatus: "published", status: { $ne: "deleted" }, ...(kind ? { kind } : {}) })
+  return CmsPage.find({
+    pageStatus: "published",
+    status: { $ne: "deleted" },
+    ...(kind ? { kind } : {}),
+  })
     .select("slug title kind summary showInFooter sortOrder updatedAt seo.robotsIndex")
     .sort({ sortOrder: 1, title: 1 })
     .lean();
 }
 
 export async function getPublishedPage(slug: string) {
-  const page = await CmsPage.findOne({ pageStatus: "published", slug, status: { $ne: "deleted" } }).lean();
+  const page = await CmsPage.findOne({
+    pageStatus: "published",
+    slug,
+    status: { $ne: "deleted" },
+  }).lean();
   if (!page) throw new AppError("Page not found", 404);
   return page;
 }
 
 export async function listAdminPages() {
-  return CmsPage.find({ status: { $ne: "deleted" } }).sort({ kind: 1, sortOrder: 1 }).lean();
+  return CmsPage.find({ status: { $ne: "deleted" } })
+    .sort({ kind: 1, sortOrder: 1 })
+    .lean();
 }
 
 export async function savePage(input: PageInput, updatedBy: string, id?: string) {
@@ -66,7 +76,9 @@ export async function savePage(input: PageInput, updatedBy: string, id?: string)
     throw new AppError(`"${slug}" is reserved by the storefront. Choose another URL.`, 409);
   }
 
-  const clash = await CmsPage.findOne({ slug, ...(id ? { _id: { $ne: id } } : {}) }).select("_id").lean();
+  const clash = await CmsPage.findOne({ slug, ...(id ? { _id: { $ne: id } } : {}) })
+    .select("_id")
+    .lean();
   if (clash) throw new AppError(`A page already uses /pages/${slug}`, 409);
 
   const data = {
@@ -78,7 +90,10 @@ export async function savePage(input: PageInput, updatedBy: string, id?: string)
   };
 
   if (!id) {
-    return CmsPage.create({ ...data, publishedAt: data.pageStatus === "published" ? new Date() : undefined });
+    return CmsPage.create({
+      ...data,
+      publishedAt: data.pageStatus === "published" ? new Date() : undefined,
+    });
   }
 
   const existing = await CmsPage.findById(id);
@@ -96,7 +111,9 @@ export async function savePage(input: PageInput, updatedBy: string, id?: string)
 }
 
 export async function deletePage(id: string) {
-  const page = await CmsPage.findByIdAndUpdate(id, { $set: { deletedAt: new Date(), status: "deleted" } });
+  const page = await CmsPage.findByIdAndUpdate(id, {
+    $set: { deletedAt: new Date(), status: "deleted" },
+  });
   if (!page) throw new AppError("Page not found", 404);
 }
 
@@ -190,7 +207,10 @@ export async function listPublishedPosts(
   const query: Record<string, unknown> = publicPostFilter();
 
   if (filter.category) {
-    const category = (await BlogCategory.findOne({ slug: filter.category, status: { $ne: "deleted" } })
+    const category = (await BlogCategory.findOne({
+      slug: filter.category,
+      status: { $ne: "deleted" },
+    })
       .select("_id")
       .lean()) as unknown as { _id: unknown } | null;
     if (!category) throw new AppError("Category not found", 404);
@@ -200,7 +220,9 @@ export async function listPublishedPosts(
 
   const [items, total] = await Promise.all([
     BlogPost.find(query)
-      .select("title slug excerpt featuredImage categoryId tags authorId publishedAt readingMinutes updatedAt")
+      .select(
+        "title slug excerpt featuredImage categoryId tags authorId publishedAt readingMinutes updatedAt",
+      )
       .populate("categoryId", "name slug")
       .populate("authorId", "name slug")
       .sort({ publishedAt: -1 })
@@ -217,12 +239,14 @@ export async function getPublishedPost(slug: string) {
   const post = (await BlogPost.findOne({ ...publicPostFilter(), slug })
     .populate("categoryId", "name slug")
     .populate("authorId", "name slug bio avatar")
-    .lean()) as unknown as (Record<string, unknown> & {
-    _id: unknown;
-    categoryId?: { _id: unknown };
-    tags?: string[];
-    relatedProductIds?: unknown[];
-  }) | null;
+    .lean()) as unknown as
+    | (Record<string, unknown> & {
+        _id: unknown;
+        categoryId?: { _id: unknown };
+        tags?: string[];
+        relatedProductIds?: unknown[];
+      })
+    | null;
 
   if (!post) throw new AppError("Article not found", 404);
 
@@ -237,7 +261,11 @@ export async function getPublishedPost(slug: string) {
       .limit(3)
       .lean(),
     post.relatedProductIds?.length
-      ? Product.find({ _id: { $in: post.relatedProductIds }, active: true, status: { $ne: "deleted" } })
+      ? Product.find({
+          _id: { $in: post.relatedProductIds },
+          active: true,
+          status: { $ne: "deleted" },
+        })
           .select("name slug media variants.basePrice variants.salePrice")
           .lean()
       : Promise.resolve([]),
@@ -248,7 +276,10 @@ export async function getPublishedPost(slug: string) {
 
 export async function listBlogTaxonomy() {
   const [categories, tags] = await Promise.all([
-    BlogCategory.find({ status: { $ne: "deleted" } }).select("name slug description seo").sort({ name: 1 }).lean(),
+    BlogCategory.find({ status: { $ne: "deleted" } })
+      .select("name slug description seo")
+      .sort({ name: 1 })
+      .lean(),
     BlogPost.aggregate([
       { $match: publicPostFilter() },
       { $unwind: "$tags" },
@@ -257,15 +288,24 @@ export async function listBlogTaxonomy() {
       { $limit: 50 },
     ]),
   ]);
-  return { categories, tags: (tags as Array<{ _id: string; count: number }>).map((tag) => ({ count: tag.count, tag: tag._id })) };
+  return {
+    categories,
+    tags: (tags as Array<{ _id: string; count: number }>).map((tag) => ({
+      count: tag.count,
+      tag: tag._id,
+    })),
+  };
 }
 
 export async function listAdminPosts(pagination: PaginationOptions, search?: string) {
   const query: Record<string, unknown> = { status: { $ne: "deleted" } };
-  if (search) query.title = { $options: "i", $regex: search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") };
+  if (search)
+    query.title = { $options: "i", $regex: search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") };
   const [items, total] = await Promise.all([
     BlogPost.find(query)
-      .select("title slug postStatus publishedAt categoryId authorId updatedAt seo.title seo.description")
+      .select(
+        "title slug postStatus publishedAt categoryId authorId updatedAt seo.title seo.description",
+      )
       .populate("categoryId", "name")
       .populate("authorId", "name")
       .sort({ updatedAt: -1 })
@@ -285,7 +325,9 @@ export async function getAdminPost(id: string) {
 
 export async function savePost(input: PostInput, userId: string, id?: string) {
   const slug = createSlug(input.slug || input.title);
-  const clash = await BlogPost.findOne({ slug, ...(id ? { _id: { $ne: id } } : {}) }).select("_id").lean();
+  const clash = await BlogPost.findOne({ slug, ...(id ? { _id: { $ne: id } } : {}) })
+    .select("_id")
+    .lean();
   if (clash) throw new AppError(`Another article already uses /blog/${slug}`, 409);
 
   if (input.postStatus === "scheduled" && (!input.publishedAt || input.publishedAt <= new Date())) {
@@ -325,7 +367,9 @@ export async function savePost(input: PostInput, userId: string, id?: string) {
 }
 
 export async function deletePost(id: string) {
-  const post = await BlogPost.findByIdAndUpdate(id, { $set: { deletedAt: new Date(), status: "deleted" } });
+  const post = await BlogPost.findByIdAndUpdate(id, {
+    $set: { deletedAt: new Date(), status: "deleted" },
+  });
   if (!post) throw new AppError("Article not found", 404);
 }
 
@@ -338,18 +382,28 @@ export async function publishScheduledPosts(now = new Date()) {
   return { published: result.modifiedCount };
 }
 
-export async function saveBlogCategory(input: { name: string; slug?: string; description?: string; seo?: Record<string, unknown> }, id?: string) {
+export async function saveBlogCategory(
+  input: { name: string; slug?: string; description?: string; seo?: Record<string, unknown> },
+  id?: string,
+) {
   const slug = createSlug(input.slug || input.name);
-  const clash = await BlogCategory.findOne({ slug, ...(id ? { _id: { $ne: id } } : {}) }).select("_id").lean();
+  const clash = await BlogCategory.findOne({ slug, ...(id ? { _id: { $ne: id } } : {}) })
+    .select("_id")
+    .lean();
   if (clash) throw new AppError(`Category slug "${slug}" is taken`, 409);
   return id
     ? BlogCategory.findByIdAndUpdate(id, { $set: { ...input, slug } }, { new: true })
     : BlogCategory.create({ ...input, slug });
 }
 
-export async function saveBlogAuthor(input: { name: string; slug?: string; bio?: string; avatar?: unknown }, id?: string) {
+export async function saveBlogAuthor(
+  input: { name: string; slug?: string; bio?: string; avatar?: unknown },
+  id?: string,
+) {
   const slug = createSlug(input.slug || input.name);
-  const clash = await BlogAuthor.findOne({ slug, ...(id ? { _id: { $ne: id } } : {}) }).select("_id").lean();
+  const clash = await BlogAuthor.findOne({ slug, ...(id ? { _id: { $ne: id } } : {}) })
+    .select("_id")
+    .lean();
   if (clash) throw new AppError(`Author slug "${slug}" is taken`, 409);
   return id
     ? BlogAuthor.findByIdAndUpdate(id, { $set: { ...input, slug } }, { new: true })
@@ -357,7 +411,9 @@ export async function saveBlogAuthor(input: { name: string; slug?: string; bio?:
 }
 
 export async function listBlogAuthors() {
-  return BlogAuthor.find({ status: { $ne: "deleted" } }).sort({ name: 1 }).lean();
+  return BlogAuthor.find({ status: { $ne: "deleted" } })
+    .sort({ name: 1 })
+    .lean();
 }
 
 export async function blogSitemapEntries() {
@@ -365,7 +421,9 @@ export async function blogSitemapEntries() {
     BlogPost.find({ ...publicPostFilter(), "seo.robotsIndex": { $ne: false } })
       .select("slug updatedAt publishedAt title featuredImage")
       .lean(),
-    BlogCategory.find({ status: { $ne: "deleted" }, "seo.robotsIndex": { $ne: false } }).select("slug updatedAt").lean(),
+    BlogCategory.find({ status: { $ne: "deleted" }, "seo.robotsIndex": { $ne: false } })
+      .select("slug updatedAt")
+      .lean(),
   ]);
   return { categories, posts };
 }

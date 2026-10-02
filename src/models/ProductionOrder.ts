@@ -26,7 +26,12 @@ const productionOrderSchema = new Schema(
     fabricInventoryId: { type: Schema.Types.ObjectId, ref: "FabricInventory" },
     fabricQuantityRequired: { type: Number, min: 0, default: 0 },
     stage: { type: String, enum: productionStages, default: "order_received", index: true },
-    status: { type: String, enum: ["open", "completed", "cancelled"], default: "open", index: true },
+    status: {
+      type: String,
+      enum: ["open", "completed", "cancelled"],
+      default: "open",
+      index: true,
+    },
     warehouseId: { type: Schema.Types.ObjectId, ref: "Warehouse" },
     incomingPostedAt: { type: Date },
     stockPostedAt: { type: Date },

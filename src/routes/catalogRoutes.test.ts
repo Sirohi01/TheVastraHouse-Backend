@@ -51,7 +51,9 @@ test("public product list forces active products and hides internal pricing", as
     data: Array<{
       availabilityStatus: string;
       merchandisingMetrics?: unknown;
-      variants: Array<Record<string, unknown> & { availability: { status: string; available: number } }>;
+      variants: Array<
+        Record<string, unknown> & { availability: { status: string; available: number } }
+      >;
     }>;
     meta: { total: number };
   };
@@ -77,7 +79,10 @@ test("availability comes from the inventory ledger, not the product document", a
 
   const response = await fetch(`${url}/api/${API_VERSION}/catalog/products`);
   const payload = (await response.json()) as {
-    data: Array<{ availabilityStatus: string; variants: Array<{ availability: { status: string } }> }>;
+    data: Array<{
+      availabilityStatus: string;
+      variants: Array<{ availability: { status: string } }>;
+    }>;
   };
 
   assert.equal(payload.data[0].variants[0].availability.status, "out_of_stock");
@@ -130,11 +135,19 @@ test("product detail by slug returns storefront-safe fields", async (t) => {
   t.after(close);
   const response = await fetch(`${url}/api/${API_VERSION}/catalog/products/red-silk-kurti`);
   const payload = (await response.json()) as {
-    product: { slug: string; seo: { title: string }; variants: Array<Record<string, unknown> & { availability: { status: string } }> };
+    product: {
+      slug: string;
+      seo: { title: string };
+      variants: Array<Record<string, unknown> & { availability: { status: string } }>;
+    };
   };
 
   assert.equal(response.status, 200);
-  assert.deepEqual(filters[0], { slug: "red-silk-kurti", active: true, status: { $ne: "deleted" } });
+  assert.deepEqual(filters[0], {
+    slug: "red-silk-kurti",
+    active: true,
+    status: { $ne: "deleted" },
+  });
   assert.equal(payload.product.seo.title, "Red Silk Kurti");
   assert.equal(payload.product.variants[0].costPrice, undefined);
   assert.equal(payload.product.variants[0].availability.status, "low_stock");
@@ -154,7 +167,9 @@ test("PDP endpoint aggregates curated merchandising sets", async (t) => {
   t.after(
     stubStatics(Product, {
       find: (filter: { _id?: { $in?: unknown[] } }) =>
-        queryResult((filter._id?.$in ?? []).map((id) => ({ ...buildProductPayload(), _id: String(id) }))),
+        queryResult(
+          (filter._id?.$in ?? []).map((id) => ({ ...buildProductPayload(), _id: String(id) })),
+        ),
       findOne: () => queryResult(product),
     }),
   );
@@ -180,9 +195,19 @@ test("reviews require sign-in, enter moderation, and only approved reviews are l
   const userId = String(new Types.ObjectId());
   const created: Array<Record<string, unknown>> = [];
   const listFilters: unknown[] = [];
-  t.after(stubStatics(Product, { findOne: () => queryResult({ _id: productId, name: "Red Silk Kurti", slug: "red-silk-kurti" }) }));
+  t.after(
+    stubStatics(Product, {
+      findOne: () =>
+        queryResult({ _id: productId, name: "Red Silk Kurti", slug: "red-silk-kurti" }),
+    }),
+  );
   t.after(stubStatics(Order, { exists: () => Promise.resolve({ _id: new Types.ObjectId() }) }));
-  t.after(stubStatics(User, { findById: () => queryResult({ email: "ananya@shop.in", firstName: "Ananya", lastName: "Sharma" }) }));
+  t.after(
+    stubStatics(User, {
+      findById: () =>
+        queryResult({ email: "ananya@shop.in", firstName: "Ananya", lastName: "Sharma" }),
+    }),
+  );
   t.after(
     stubStatics(ProductReview, {
       aggregate: () => Promise.resolve([{ _id: 5, count: 1 }]),
@@ -202,11 +227,14 @@ test("reviews require sign-in, enter moderation, and only approved reviews are l
   t.after(close);
   const body = JSON.stringify({ body: "Beautiful fabric and comfortable fit.", rating: 5 });
 
-  const anonymous = await fetch(`${url}/api/${API_VERSION}/catalog/products/red-silk-kurti/reviews`, {
-    body,
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-  });
+  const anonymous = await fetch(
+    `${url}/api/${API_VERSION}/catalog/products/red-silk-kurti/reviews`,
+    {
+      body,
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
   assert.equal(anonymous.status, 401);
 
   const token = signAccessToken({ sub: userId, type: "customer" });
@@ -236,7 +264,9 @@ test("customers cannot reach the review moderation API", async (t) => {
   const { close, url } = await listen();
   t.after(close);
   const token = signAccessToken({ sub: String(new Types.ObjectId()), type: "customer" });
-  t.after(stubStatics(User, { findById: () => Promise.resolve({ status: "active", type: "customer" }) }));
+  t.after(
+    stubStatics(User, { findById: () => Promise.resolve({ status: "active", type: "customer" }) }),
+  );
   const response = await fetch(`${url}/api/${API_VERSION}/catalog/admin/reviews`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -250,18 +280,39 @@ test("sitemap endpoint returns indexable product/category/collection slugs", asy
     filters.push(filter);
     return queryResult(items);
   };
-  t.after(stubStatics(Product, { find: record([{ slug: "red-silk-kurti", updatedAt: new Date("2026-01-01") }]) }));
-  t.after(stubStatics(Category, { find: record([{ slug: "festive-wear", updatedAt: new Date("2026-01-02") }]) }));
-  t.after(stubStatics(Collection, { find: record([{ slug: "winter-edit", updatedAt: new Date("2026-01-03") }]) }));
+  t.after(
+    stubStatics(Product, {
+      find: record([{ slug: "red-silk-kurti", updatedAt: new Date("2026-01-01") }]),
+    }),
+  );
+  t.after(
+    stubStatics(Category, {
+      find: record([{ slug: "festive-wear", updatedAt: new Date("2026-01-02") }]),
+    }),
+  );
+  t.after(
+    stubStatics(Collection, {
+      find: record([{ slug: "winter-edit", updatedAt: new Date("2026-01-03") }]),
+    }),
+  );
   const { close, url } = await listen();
   t.after(close);
   const response = await fetch(`${url}/api/${API_VERSION}/catalog/sitemap`);
   const payload = (await response.json()) as Record<string, Array<{ slug: string }>>;
 
   assert.equal(response.status, 200);
-  assert.deepEqual(payload.products.map((item) => item.slug), ["red-silk-kurti"]);
-  assert.deepEqual(payload.categories.map((item) => item.slug), ["festive-wear"]);
-  assert.deepEqual(payload.collections.map((item) => item.slug), ["winter-edit"]);
+  assert.deepEqual(
+    payload.products.map((item) => item.slug),
+    ["red-silk-kurti"],
+  );
+  assert.deepEqual(
+    payload.categories.map((item) => item.slug),
+    ["festive-wear"],
+  );
+  assert.deepEqual(
+    payload.collections.map((item) => item.slug),
+    ["winter-edit"],
+  );
   assert.deepEqual((filters[0] as Record<string, unknown>)["seo.robotsIndex"], { $ne: false });
 });
 
@@ -271,7 +322,12 @@ test("seo-settings endpoint returns resolved public defaults without auth", asyn
   t.after(close);
   const response = await fetch(`${url}/api/${API_VERSION}/catalog/seo-settings`);
   const payload = (await response.json()) as {
-    seo: { siteName: string; titleTemplate: string; defaultOgImage: string; robots: { indexSite: boolean } };
+    seo: {
+      siteName: string;
+      titleTemplate: string;
+      defaultOgImage: string;
+      robots: { indexSite: boolean };
+    };
   };
 
   assert.equal(response.status, 200);

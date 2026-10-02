@@ -20,16 +20,16 @@ export function normalizeGiftCardCode(code: string) {
 export function isGiftCardUsable(card: GiftCardLean | null, now = new Date()) {
   return Boolean(
     card &&
-      card.status === "active" &&
-      card.balance > 0 &&
-      (!card.expiresAt || card.expiresAt.getTime() >= now.getTime()),
+    card.status === "active" &&
+    card.balance > 0 &&
+    (!card.expiresAt || card.expiresAt.getTime() >= now.getTime()),
   );
 }
 
 export async function getGiftCardByCode(code: string) {
-  return (await GiftCard.findOne({ code: normalizeGiftCardCode(code) }).lean()) as
-    | GiftCardLean
-    | null;
+  return (await GiftCard.findOne({
+    code: normalizeGiftCardCode(code),
+  }).lean()) as GiftCardLean | null;
 }
 
 /**
@@ -57,7 +57,11 @@ export async function redeemGiftCardsForOrder(input: {
           code,
           status: "active",
           balance: { $gte: amount },
-          $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gte: new Date() } }],
+          $or: [
+            { expiresAt: { $exists: false } },
+            { expiresAt: null },
+            { expiresAt: { $gte: new Date() } },
+          ],
         },
         { $inc: { balance: -amount } },
         { new: true },
@@ -203,7 +207,12 @@ export async function expireGiftCards(now = new Date()) {
 }
 
 function generateGiftCardCode() {
-  return `TVH-${crypto.randomBytes(6).toString("hex").toUpperCase().match(/.{1,4}/g)!.join("-")}`;
+  return `TVH-${crypto
+    .randomBytes(6)
+    .toString("hex")
+    .toUpperCase()
+    .match(/.{1,4}/g)!
+    .join("-")}`;
 }
 
 function roundMoney(value: number) {
@@ -223,8 +232,15 @@ export async function startGiftCardPurchase(input: {
   recipientName?: string;
   message?: string;
 }) {
-  if (!Number.isInteger(input.amount) || input.amount < GIFT_CARD_MIN || input.amount > GIFT_CARD_MAX) {
-    throw new AppError(`Gift cards can be bought for Rs. ${GIFT_CARD_MIN} to Rs. ${GIFT_CARD_MAX}`, 400);
+  if (
+    !Number.isInteger(input.amount) ||
+    input.amount < GIFT_CARD_MIN ||
+    input.amount > GIFT_CARD_MAX
+  ) {
+    throw new AppError(
+      `Gift cards can be bought for Rs. ${GIFT_CARD_MIN} to Rs. ${GIFT_CARD_MAX}`,
+      400,
+    );
   }
 
   const { createRazorpayPayment } = await import("./paymentService.js");
@@ -261,7 +277,11 @@ export async function fulfillGiftCardPurchase(session: {
 }) {
   const metadata = session.metadata ?? {};
 
-  if (metadata.kind !== "gift_card_purchase" || session.status !== "confirmed" || metadata.giftCardIssuedAt) {
+  if (
+    metadata.kind !== "gift_card_purchase" ||
+    session.status !== "confirmed" ||
+    metadata.giftCardIssuedAt
+  ) {
     return null;
   }
 
@@ -319,7 +339,9 @@ export async function listUserGiftCards(userId: string, email: string) {
   return GiftCard.find({
     $or: [{ issuedToUserId: userId }, { purchasedByUserId: userId }, { recipientEmail: email }],
   })
-    .select("code balance initialAmount currencyCode status expiresAt recipientEmail source createdAt")
+    .select(
+      "code balance initialAmount currencyCode status expiresAt recipientEmail source createdAt",
+    )
     .sort({ createdAt: -1 })
     .limit(50)
     .lean();
