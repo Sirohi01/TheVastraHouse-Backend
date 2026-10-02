@@ -160,6 +160,32 @@ export async function updateSeoSettings(input: Record<string, unknown>, updatedB
   return updated;
 }
 
+/** Mirrors the storefront's canonical guard (frontend/src/lib/seo.ts). */
+const CANONICAL_ROUTE_PREFIXES = [
+  "/shop",
+  "/pre-order",
+  "/about",
+  "/contact",
+  "/faq",
+  "/blog",
+  "/categories/",
+  "/collections/",
+  "/pages/",
+  "/policies",
+];
+
+function isStorefrontRoute(path: string) {
+  const pathname = path.split(/[?#]/)[0] || "/";
+  return (
+    pathname === "/" ||
+    CANONICAL_ROUTE_PREFIXES.some((prefix) =>
+      prefix.endsWith("/")
+        ? pathname.startsWith(prefix) && pathname.length > prefix.length
+        : pathname === prefix || pathname.startsWith(`${prefix}/`),
+    )
+  );
+}
+
 type AuditIssue = {
   entityType: "product" | "category" | "collection" | "blog" | "page";
   entityId: string;
@@ -328,6 +354,15 @@ export async function runSeoAudit() {
           "warning",
           "external_canonical",
           `Canonical points to another site (${item.seo.canonicalUrl}).`,
+        );
+      } else if (
+        item.seo?.canonicalUrl &&
+        !isStorefrontRoute(item.seo.canonicalUrl.replace(settings.baseUrl, "") || "/")
+      ) {
+        add(
+          "error",
+          "invalid_canonical",
+          `Canonical ${item.seo.canonicalUrl} is not a storefront page; the page's own URL is used instead. Clear the field or use a /shop/... URL.`,
         );
       }
 
