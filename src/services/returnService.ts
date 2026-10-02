@@ -1,4 +1,5 @@
 import { Types, type HydratedDocument } from "mongoose";
+import { returnPolicy } from "../config/policies.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { Order, type orderStatuses } from "../models/Order.js";
 import { PaymentHistory } from "../models/PaymentHistory.js";
@@ -12,9 +13,7 @@ import { transitionOrderDocument } from "./orderLifecycleService.js";
 import { refundRazorpayPayment } from "./paymentService.js";
 import { generateReturnDocuments } from "./invoiceService.js";
 
-export const returnPolicy = {
-  windowDays: 7,
-} as const;
+export { returnPolicy };
 
 export type RefundMethod = (typeof refundMethods)[number];
 type OrderStatus = (typeof orderStatuses)[number];

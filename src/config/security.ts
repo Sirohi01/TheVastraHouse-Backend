@@ -4,9 +4,19 @@ import cors from "cors";
 import helmet from "helmet";
 import { env, isProduction } from "./env.js";
 
+const frontendOrigin = new URL(env.FRONTEND_PUBLIC_URL);
+// The storefront is reachable on both the apex and www host of its domain.
+const frontendHostAlias = frontendOrigin.hostname.startsWith("www.")
+  ? frontendOrigin.hostname.slice(4)
+  : `www.${frontendOrigin.hostname}`;
+
 const allowedOrigins = new Set([
-  env.FRONTEND_PUBLIC_URL.replace(/\/$/, ""),
-  env.BACKEND_PUBLIC_URL.replace(/\/$/, ""),
+  frontendOrigin.origin,
+  `${frontendOrigin.protocol}//${frontendHostAlias}${frontendOrigin.port ? `:${frontendOrigin.port}` : ""}`,
+  new URL(env.BACKEND_PUBLIC_URL).origin,
+  ...env.CORS_ALLOWED_ORIGINS.split(",")
+    .map((origin) => origin.trim().replace(/\/$/, ""))
+    .filter(Boolean),
 ]);
 
 export const corsOptions: CorsOptions = {

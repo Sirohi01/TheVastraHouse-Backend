@@ -19,6 +19,8 @@ const envSchema = z.object({
   BACKEND_PORT: z.coerce.number().int().positive().default(4000),
   FRONTEND_PUBLIC_URL: z.string().url().default("http://localhost:3000"),
   BACKEND_PUBLIC_URL: z.string().url().default("http://localhost:4000"),
+  // Comma-separated extra storefront origins (e.g. the platform URL while a domain moves).
+  CORS_ALLOWED_ORIGINS: z.string().default(""),
   MONGODB_URI: z.string().min(1).default("mongodb://127.0.0.1:27017/vastra_house"),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
   JWT_ACCESS_SECRET: z.string().min(32).default("dev-access-secret-change-me-at-least-32-chars"),

@@ -6,7 +6,8 @@ import { CmsPage } from "../models/CmsPage.js";
 import { Collection } from "../models/Collection.js";
 import { Product } from "../models/Product.js";
 import { SeoSettings } from "../models/SeoSettings.js";
-import { getRuntimeSetting } from "./runtimeSettingsService.js";
+import { returnPolicy } from "../config/policies.js";
+import { getRuntimeNumberSetting, getRuntimeSetting } from "./runtimeSettingsService.js";
 import { htmlToPlainText } from "./htmlSanitizer.js";
 
 type MediaRef = { url?: string; altText?: string; type?: string; aspectRatio?: string };
@@ -88,8 +89,11 @@ export async function getPublicSeoSettings() {
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const ga4MeasurementId =
-    (await getRuntimeSetting("GA4_MEASUREMENT_ID")) || env.GA4_MEASUREMENT_ID;
+  const [ga4MeasurementId, shippingStandardFee, freeShippingThreshold] = await Promise.all([
+    getRuntimeSetting("GA4_MEASUREMENT_ID").then((value) => value || env.GA4_MEASUREMENT_ID),
+    getRuntimeNumberSetting("SHIPPING_STANDARD_FEE", env.SHIPPING_STANDARD_FEE),
+    getRuntimeNumberSetting("SHIPPING_FREE_THRESHOLD", env.SHIPPING_FREE_THRESHOLD),
+  ]);
 
   return {
     analytics: {
@@ -97,6 +101,13 @@ export async function getPublicSeoSettings() {
     },
     baseUrl: (settings.baseUrl || env.FRONTEND_PUBLIC_URL).replace(/\/$/, ""),
     brandName: settings.brandName || resolvedSiteName,
+    // The values checkout and returns enforce, so product structured data never disagrees.
+    commerce: {
+      currency: "INR",
+      freeShippingThreshold,
+      returnWindowDays: returnPolicy.windowDays,
+      shippingStandardFee,
+    },
     defaultDescription:
       settings.defaultDescription || defaultDescription || env.SEO_DEFAULT_DESCRIPTION,
     defaultKeywords: settings.defaultKeywords ?? [],
