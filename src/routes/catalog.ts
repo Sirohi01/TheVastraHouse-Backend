@@ -17,6 +17,7 @@ import { Product } from "../models/Product.js";
 import { StockLedger } from "../models/StockLedger.js";
 import { Warehouse } from "../models/Warehouse.js";
 import { Tag } from "../models/Tag.js";
+import { auditProductContent, customerText } from "../services/contentGuardService.js";
 import { createSlug } from "../services/slugService.js";
 import { generateBarcode, generateSku } from "../services/skuService.js";
 import { computeBadges, recomputeProductBadges } from "../services/merchandisingBadgeService.js";
@@ -90,8 +91,8 @@ const preOrderInputSchema = z
 
 export const seoInputSchema = z
   .object({
-    title: z.string().max(120).optional(),
-    description: z.string().max(320).optional(),
+    title: customerText(z.string().max(120), "SEO title").optional(),
+    description: customerText(z.string().max(320), "SEO description").optional(),
     keywords: z.array(z.string().min(1).max(60)).max(20).optional(),
     canonicalUrl: z
       .string()
@@ -103,8 +104,8 @@ export const seoInputSchema = z
       .or(z.literal("")),
     robotsIndex: z.boolean().optional(),
     robotsFollow: z.boolean().optional(),
-    ogTitle: z.string().max(120).optional(),
-    ogDescription: z.string().max(320).optional(),
+    ogTitle: customerText(z.string().max(120), "Open Graph title").optional(),
+    ogDescription: customerText(z.string().max(320), "Open Graph description").optional(),
     ogImage: mediaReferenceSchema.optional(),
     twitterTitle: z.string().max(120).optional(),
     twitterDescription: z.string().max(320).optional(),
@@ -115,7 +116,10 @@ export const seoInputSchema = z
   .optional();
 
 const faqInputSchema = z
-  .object({ question: z.string().min(3).max(300), answer: z.string().min(2).max(4000) })
+  .object({
+    question: customerText(z.string().min(3).max(300), "FAQ question"),
+    answer: customerText(z.string().min(2).max(4000), "FAQ answer"),
+  })
   .strict();
 
 const variantInputSchema = z
@@ -154,14 +158,14 @@ const variantInputSchema = z
 
 const productInputSchema = z
   .object({
-    name: z.string().min(1).max(180),
+    name: customerText(z.string().min(1).max(180), "Product name"),
     slug: z.string().max(220).optional(),
-    description: z.string().min(1),
-    shortDescription: z.string().max(300).optional(),
-    highlights: z.array(z.string().min(1).max(160)).default([]),
-    fabricDetails: z.string().optional(),
-    washCare: z.string().optional(),
-    sizeGuide: z.string().optional(),
+    description: customerText(z.string().min(20).max(8000), "Description"),
+    shortDescription: customerText(z.string().max(300), "Short description").optional(),
+    highlights: z.array(customerText(z.string().min(1).max(160), "Highlight")).default([]),
+    fabricDetails: customerText(z.string().max(600), "Fabric details").optional(),
+    washCare: customerText(z.string().max(1500), "Wash care").optional(),
+    sizeGuide: customerText(z.string().max(2000), "Size guide").optional(),
     sizeGuideMedia: mediaReferenceSchema.optional(),
     hsnCode: z.string().regex(/^\d{4,8}$/),
     gstRate: gstRateSchema,
@@ -202,12 +206,12 @@ const taxonomyInputSchema = z
   .object({
     name: z.string().min(1).max(140),
     slug: z.string().max(180).optional(),
-    description: z.string().max(2000).optional(),
+    description: customerText(z.string().max(2000), "Description").optional(),
     banner: mediaReferenceSchema.nullable().optional(),
     active: z.boolean().default(true),
     seo: seoInputSchema,
-    introContent: z.string().max(4000).optional(),
-    bottomContent: z.string().max(12000).optional(),
+    introContent: customerText(z.string().max(4000), "Intro content").optional(),
+    bottomContent: customerText(z.string().max(12000), "Bottom content").optional(),
     faqs: z.array(faqInputSchema).max(20).optional(),
     sortOrder: z.coerce.number().int().optional(),
     parentId: objectIdSchema.nullable().optional(),
@@ -309,6 +313,25 @@ const requireCatalogManage = [
 ];
 
 catalogRouter.get("/admin/lookups", ...requireCatalogManage, listAdminLookups);
+catalogRouter.get("/admin/content-quality", ...requireCatalogManage, async (_req, res, next) => {
+  try {
+    const products = (await Product.find({
+      status: { $ne: "deleted" },
+    }).lean()) as unknown as Array<Parameters<typeof auditProductContent>[0] & { _id: unknown }>;
+    res.json({
+      products: products
+        .map((product) => ({
+          _id: product._id,
+          name: product.name,
+          slug: product.slug,
+          warnings: auditProductContent(product),
+        }))
+        .filter((item) => item.warnings.length),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 catalogRouter.get("/admin/products", ...requireCatalogManage, listProducts);
 catalogRouter.post(
   "/admin/products",
@@ -557,13 +580,21 @@ async function getSitemapData(_req: Request, res: Response, next: NextFunction) 
     };
     const [products, categories, collections] = await Promise.all([
       Product.find(activeFilter).select("slug updatedAt name media").lean(),
-      Category.find(activeFilter).select("slug updatedAt").lean(),
-      Collection.find(activeFilter).select("slug updatedAt").lean(),
+      Category.find(activeFilter).select("slug name updatedAt").lean(),
+      Collection.find(activeFilter).select("slug name updatedAt").lean(),
     ]);
 
     res.json({
-      categories: categories.map((item) => ({ slug: item.slug, updatedAt: item.updatedAt })),
-      collections: collections.map((item) => ({ slug: item.slug, updatedAt: item.updatedAt })),
+      categories: categories.map((item) => ({
+        name: item.name,
+        slug: item.slug,
+        updatedAt: item.updatedAt,
+      })),
+      collections: collections.map((item) => ({
+        name: item.name,
+        slug: item.slug,
+        updatedAt: item.updatedAt,
+      })),
       products: products.map((item) => ({
         images: ((item.media as Array<{ url?: string; altText?: string; type?: string }>) ?? [])
           .filter((media) => media.type === "image" && media.url?.startsWith("https://"))

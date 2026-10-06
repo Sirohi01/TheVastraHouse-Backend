@@ -22,6 +22,8 @@ const collectionSchema = new Schema(
 
 applySoftDeleteFields(collectionSchema);
 collectionSchema.index({ brandId: 1, slug: 1 }, { unique: true });
+// Storefront collection pages look collections up by slug alone.
+collectionSchema.index({ slug: 1, status: 1 });
 
 export type CollectionDocument = InferSchemaType<typeof collectionSchema>;
 

@@ -74,6 +74,21 @@ const cmsContentSchema = new Schema(
       storyEyebrow: { type: String, trim: true },
       storyTitle: { type: String, trim: true },
       storyCopy: { type: String, trim: true },
+      // Entity-rich, customer-facing sections (who we are, what we sell, how orders work...).
+      sections: [
+        {
+          _id: false,
+          heading: { type: String, required: true, trim: true },
+          body: { type: String, required: true, trim: true },
+        },
+      ],
+      // Optional verified business facts; rendered only when filled in by the owner.
+      foundedYear: { type: Number, min: 1800, max: 2100 },
+      founder: {
+        name: { type: String, trim: true },
+        role: { type: String, trim: true },
+        bio: { type: String, trim: true },
+      },
       media: mediaReferenceSchema,
       primaryCta: linkSchema,
       values: [

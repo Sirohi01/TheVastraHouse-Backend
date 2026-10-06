@@ -143,6 +143,8 @@ const productSchema = new Schema(
 
 applySoftDeleteFields(productSchema);
 productSchema.index({ brandId: 1, slug: 1 }, { unique: true });
+// Storefront product pages look products up by slug alone (the unique index above is brand-first).
+productSchema.index({ slug: 1, active: 1, status: 1 });
 productSchema.index({ name: "text", description: "text", fabricDetails: "text" });
 productSchema.index({ "computedBadges.newArrival": 1, "computedBadges.bestSeller": 1 });
 productSchema.index({ active: 1, status: 1, createdAt: -1 });

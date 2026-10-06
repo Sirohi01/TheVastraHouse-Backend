@@ -5,6 +5,7 @@ import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
 import { StockLedger } from "../models/StockLedger.js";
 import { Warehouse } from "../models/Warehouse.js";
+import { stripInternalNotes } from "./contentGuardService.js";
 import { isPreOrderActive, type PreOrderVariantSnapshot } from "./preOrderService.js";
 
 export const LOW_STOCK_DISPLAY_THRESHOLD = 5;
@@ -134,7 +135,12 @@ export function serializePublicProduct(
     const pricing = resolveVariantPrice(variant, viewer);
     return {
       ...publicVariant,
-      availability: variantAvailability(variant, stock),
+      availability: {
+        ...variantAvailability(variant, stock),
+        // False when no inventory ledger row exists for the SKU: stock was never entered, so
+        // "out of stock" is unknown rather than a fact and must not be asserted in structured data.
+        inventoryTracked: stock !== undefined,
+      },
       ...(pricing.priceListCode
         ? { tierPrice: pricing.price, priceListCode: pricing.priceListCode }
         : {}),
@@ -144,6 +150,7 @@ export function serializePublicProduct(
 
   return {
     ...rest,
+    ...scrubCustomerText(rest),
     availabilityStatus: statuses.includes("in_stock")
       ? "in_stock"
       : statuses.includes("low_stock")
@@ -153,6 +160,29 @@ export function serializePublicProduct(
           : "out_of_stock",
     variants,
   };
+}
+
+const CUSTOMER_TEXT_FIELDS = [
+  "description",
+  "shortDescription",
+  "fabricDetails",
+  "washCare",
+  "sizeGuide",
+] as const;
+
+/** Legacy records may still hold internal notes; they are never served to the storefront. */
+function scrubCustomerText(product: Record<string, unknown>) {
+  const scrubbed: Record<string, unknown> = {};
+  for (const field of CUSTOMER_TEXT_FIELDS) {
+    if (typeof product[field] === "string") scrubbed[field] = stripInternalNotes(product[field]);
+  }
+  if (Array.isArray(product.highlights)) {
+    scrubbed.highlights = (product.highlights as unknown[])
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => stripInternalNotes(item))
+      .filter(Boolean);
+  }
+  return scrubbed;
 }
 
 export async function serializePublicProducts(

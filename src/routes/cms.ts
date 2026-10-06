@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
+import { customerText } from "../services/contentGuardService.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { CmsContent } from "../models/CmsContent.js";
 
@@ -107,7 +108,27 @@ const cmsSchema = z
         eyebrow: z.string().max(120).optional(),
         media: mediaReferenceSchema.nullable().optional(),
         primaryCta: linkSchema.optional(),
-        storyCopy: z.string().max(1200).optional(),
+        storyCopy: customerText(z.string().max(1200), "Story copy").optional(),
+        sections: z
+          .array(
+            z
+              .object({
+                body: customerText(z.string().min(1).max(1500), "Section body"),
+                heading: customerText(z.string().min(1).max(160), "Section heading"),
+              })
+              .strict(),
+          )
+          .max(12)
+          .default([]),
+        foundedYear: z.coerce.number().int().min(1800).max(2100).optional(),
+        founder: z
+          .object({
+            bio: customerText(z.string().max(1200), "Founder bio").optional(),
+            name: z.string().max(120).optional(),
+            role: z.string().max(120).optional(),
+          })
+          .strict()
+          .optional(),
         storyEyebrow: z.string().max(120).optional(),
         storyTitle: z.string().max(220).optional(),
         title: z.string().max(180).optional(),

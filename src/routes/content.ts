@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
+import { customerText } from "../services/contentGuardService.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import {
   blogSitemapEntries,
@@ -50,8 +51,8 @@ const mediaSchema = z
   .strict();
 const faqSchema = z
   .object({
-    question: z.string().trim().min(3).max(300),
-    answer: z.string().trim().min(2).max(4000),
+    question: customerText(z.string().trim().min(3).max(300), "FAQ question"),
+    answer: customerText(z.string().trim().min(2).max(4000), "FAQ answer"),
   })
   .strict();
 
@@ -147,8 +148,8 @@ const pageSchema = z
     slug: z.string().trim().max(160).optional(),
     title: z.string().trim().min(2).max(160),
     kind: z.enum(["policy", "page"]).default("page"),
-    summary: z.string().trim().max(500).optional(),
-    body: z.string().min(1).max(200_000),
+    summary: customerText(z.string().trim().max(500), "Summary").optional(),
+    body: customerText(z.string().min(1).max(200_000), "Page body"),
     heroImage: mediaSchema.optional(),
     faqs: z.array(faqSchema).max(30).optional(),
     pageStatus: z.enum(["draft", "published"]).default("draft"),
@@ -212,8 +213,8 @@ const postSchema = z
   .object({
     title: z.string().trim().min(3).max(200),
     slug: z.string().trim().max(200).optional(),
-    excerpt: z.string().trim().max(500).optional(),
-    content: z.string().min(20).max(300_000),
+    excerpt: customerText(z.string().trim().max(500), "Excerpt").optional(),
+    content: customerText(z.string().min(20).max(300_000), "Article content"),
     featuredImage: mediaSchema.optional(),
     categoryId: objectId.nullable().optional(),
     tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
