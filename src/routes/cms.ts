@@ -42,9 +42,13 @@ const heroSlideSchema = z
     fontFamily: z.enum(["serif", "sans"]).default("serif"),
     fontSize: z.enum(["sm", "md", "lg"]).default("lg"),
     media: mediaReferenceSchema.nullable().optional(),
+    // Dedicated 4:5 image/video shown on phones; falls back to `media` when empty.
+    mobileMedia: mediaReferenceSchema.nullable().optional(),
+    overlay: z.enum(["none", "soft", "medium", "strong"]).default("medium"),
     primaryCta: linkSchema.optional(),
     secondaryCta: linkSchema.optional(),
     showOutline: z.boolean().default(true),
+    showTextOnMobile: z.boolean().default(true),
     textColor: z.string().max(40).default("#ffffff"),
     title: z.string().max(160).optional(),
     // Banner scheduling (FR-CMS-02): hidden outside [startsAt, endsAt] or when disabled.
@@ -85,6 +89,7 @@ const cmsSchema = z
     home: z
       .object({
         announcement: z.string().max(240).optional(),
+        topBarText: z.string().max(240).optional(),
         hero: z
           .object({
             copy: z.string().max(500).optional(),
@@ -93,6 +98,7 @@ const cmsSchema = z
             primaryCta: linkSchema.optional(),
             secondaryCta: linkSchema.optional(),
             slides: z.array(heroSlideSchema).max(8).default([]),
+            slideDuration: z.coerce.number().int().min(3).max(30).optional(),
             title: z.string().max(160).optional(),
           })
           .strict()
@@ -139,6 +145,7 @@ const cmsSchema = z
     shop: catalogPageContentSchema.optional(),
     preOrder: catalogPageContentSchema.optional(),
     navigation: z.array(linkSchema).max(20).default([]),
+    headerNavigation: z.array(linkSchema).max(12).optional(),
     footer: z
       .object({
         brandLogo: mediaReferenceSchema.nullable().optional(),
