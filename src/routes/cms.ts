@@ -149,12 +149,17 @@ const cmsSchema = z
     footer: z
       .object({
         brandLogo: mediaReferenceSchema.nullable().optional(),
+        copyrightText: z.string().max(160).optional(),
         email: z.string().email().or(z.literal("")).optional(),
+        helpLinks: z.array(linkSchema).max(12).optional(),
         instagramPosts: z.array(z.string().url()).max(20).default([]),
         instagramUrl: z.string().url().or(z.literal("")).optional(),
         links: z.array(linkSchema).max(20).default([]),
         location: z.string().max(160).optional(),
+        newsletterText: z.string().max(200).optional(),
+        newsletterTitle: z.string().max(80).optional(),
         phone: z.string().max(40).optional(),
+        shopLinks: z.array(linkSchema).max(12).optional(),
         tagline: z.string().max(240).optional(),
         whatsappUrl: z.string().url().or(z.literal("")).optional(),
       })

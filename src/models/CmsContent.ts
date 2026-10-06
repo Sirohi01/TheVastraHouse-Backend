@@ -122,6 +122,11 @@ const cmsContentSchema = new Schema(
       phone: { type: String, trim: true },
       whatsappUrl: { type: String, trim: true },
       links: [linkSchema],
+      shopLinks: [linkSchema],
+      helpLinks: [linkSchema],
+      newsletterTitle: { type: String, trim: true },
+      newsletterText: { type: String, trim: true },
+      copyrightText: { type: String, trim: true },
     },
     testimonials: [
       {
