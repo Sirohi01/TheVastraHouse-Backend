@@ -44,6 +44,8 @@ const catalogPageContentSchema = new Schema(
     fontFamily: { type: String, enum: ["serif", "sans"], default: "serif" },
     fontSize: { type: String, enum: ["sm", "md", "lg"], default: "lg" },
     media: mediaReferenceSchema,
+    mobileMedia: mediaReferenceSchema,
+    overlay: { type: String, enum: ["none", "soft", "medium", "strong"] },
     promo: heroSlideSchema,
     showOutline: { type: Boolean, default: true },
     textColor: { type: String, trim: true, default: "#ffffff" },
@@ -95,6 +97,17 @@ const cmsContentSchema = new Schema(
         bio: { type: String, trim: true },
       },
       media: mediaReferenceSchema,
+      // Hero banner on phones (4:5); falls back to `media`.
+      mobileMedia: mediaReferenceSchema,
+      // Image beside the story section below the hero.
+      storyMedia: mediaReferenceSchema,
+      textColor: { type: String, trim: true },
+      contentPosition: { type: String, enum: ["left", "center", "right"] },
+      showOutline: { type: Boolean },
+      overlay: { type: String, enum: ["none", "soft", "medium", "strong"] },
+      valuesTitle: { type: String, trim: true },
+      closingTitle: { type: String, trim: true },
+      closingCopy: { type: String, trim: true },
       primaryCta: linkSchema,
       values: [
         {
@@ -111,6 +124,16 @@ const cmsContentSchema = new Schema(
     shop: catalogPageContentSchema,
     preOrder: catalogPageContentSchema,
     navigation: [linkSchema],
+    // Icon strip shown under the buy buttons on every product page.
+    productTrustBadges: [
+      {
+        _id: false,
+        enabled: { type: Boolean, default: true },
+        icon: { type: String, trim: true, default: "sparkles" },
+        title: { type: String, required: true, trim: true },
+        subtitle: { type: String, trim: true },
+      },
+    ],
     headerNavigation: [linkSchema],
     footer: {
       brandLogo: mediaReferenceSchema,

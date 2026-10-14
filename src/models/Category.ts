@@ -10,6 +10,8 @@ const categorySchema = new Schema(
     parentId: { type: Schema.Types.ObjectId, ref: "Category" },
     description: { type: String, trim: true },
     banner: mediaReferenceSchema,
+    mobileBanner: mediaReferenceSchema,
+    bannerOutline: { type: Boolean },
     seo: seoFieldsSchema,
     introContent: { type: String, trim: true, maxlength: 4000 },
     bottomContent: { type: String, trim: true, maxlength: 12000 },

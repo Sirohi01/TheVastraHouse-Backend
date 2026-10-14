@@ -17,6 +17,7 @@ import { Product } from "../models/Product.js";
 import { StockLedger } from "../models/StockLedger.js";
 import { Warehouse } from "../models/Warehouse.js";
 import { Tag } from "../models/Tag.js";
+import { aspectRatios } from "../models/shared/mediaReference.js";
 import { auditProductContent, customerText } from "../services/contentGuardService.js";
 import { createSlug } from "../services/slugService.js";
 import { generateBarcode, generateSku } from "../services/skuService.js";
@@ -56,7 +57,7 @@ const mediaReferenceSchema = z
     url: z.string().min(1).refine(isMediaUrl, "Media URL must be absolute or site-relative"),
     altText: z.string().min(3).max(160),
     type: z.enum(["image", "video", "pdf", "lookbook"]),
-    aspectRatio: z.enum(["1:1", "4:5", "9:16", "16:7", "16:9", "21:9", "3:2", "2:3", "custom"]),
+    aspectRatio: z.enum(aspectRatios),
     objectFit: z.enum(["cover", "contain"]).optional(),
   })
   .strict();
@@ -208,6 +209,8 @@ const taxonomyInputSchema = z
     slug: z.string().max(180).optional(),
     description: customerText(z.string().max(2000), "Description").optional(),
     banner: mediaReferenceSchema.nullable().optional(),
+    mobileBanner: mediaReferenceSchema.nullable().optional(),
+    bannerOutline: z.boolean().optional(),
     active: z.boolean().default(true),
     seo: seoInputSchema,
     introContent: customerText(z.string().max(4000), "Intro content").optional(),

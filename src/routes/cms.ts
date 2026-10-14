@@ -4,6 +4,7 @@ import { requireAuth, requirePermission } from "../middleware/authMiddleware.js"
 import { customerText } from "../services/contentGuardService.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { CmsContent } from "../models/CmsContent.js";
+import { aspectRatios } from "../models/shared/mediaReference.js";
 
 export const cmsRouter = Router();
 
@@ -16,7 +17,7 @@ const mediaReferenceSchema = z
     url: z.string().min(1).refine(isMediaUrl, "Media URL must be absolute or site-relative"),
     altText: z.string().min(3).max(160),
     type: z.enum(["image", "video", "pdf", "lookbook"]),
-    aspectRatio: z.enum(["1:1", "4:5", "9:16", "16:7", "16:9", "21:9", "3:2", "2:3", "custom"]),
+    aspectRatio: z.enum(aspectRatios),
     objectFit: z.enum(["cover", "contain"]).optional(),
   })
   .strict();
@@ -75,6 +76,9 @@ const catalogPageContentSchema = z
     fontFamily: z.enum(["serif", "sans"]).default("serif"),
     fontSize: z.enum(["sm", "md", "lg"]).default("lg"),
     media: mediaReferenceSchema.nullable().optional(),
+    mobileMedia: mediaReferenceSchema.nullable().optional(),
+    // Tint over the banner photo. Unset/"none" shows the photo untouched.
+    overlay: z.enum(["none", "soft", "medium", "strong"]).optional(),
     promo: heroSlideSchema.optional(),
     showOutline: z.boolean().default(true),
     textColor: z.string().max(40).default("#ffffff"),
@@ -113,6 +117,15 @@ const cmsSchema = z
         description: z.string().max(500).optional(),
         eyebrow: z.string().max(120).optional(),
         media: mediaReferenceSchema.nullable().optional(),
+        mobileMedia: mediaReferenceSchema.nullable().optional(),
+        storyMedia: mediaReferenceSchema.nullable().optional(),
+        textColor: z.string().max(40).optional(),
+        contentPosition: z.enum(["left", "center", "right"]).optional(),
+        showOutline: z.boolean().optional(),
+        overlay: z.enum(["none", "soft", "medium", "strong"]).optional(),
+        valuesTitle: z.string().max(120).optional(),
+        closingTitle: z.string().max(160).optional(),
+        closingCopy: z.string().max(400).optional(),
         primaryCta: linkSchema.optional(),
         storyCopy: customerText(z.string().max(1200), "Story copy").optional(),
         sections: z
@@ -145,6 +158,19 @@ const cmsSchema = z
     shop: catalogPageContentSchema.optional(),
     preOrder: catalogPageContentSchema.optional(),
     navigation: z.array(linkSchema).max(20).default([]),
+    productTrustBadges: z
+      .array(
+        z
+          .object({
+            enabled: z.boolean().default(true),
+            icon: z.enum(["truck", "box", "returns", "wallet", "shield", "leaf", "sparkles", "heart"]),
+            subtitle: z.string().max(60).optional(),
+            title: z.string().min(1).max(40),
+          })
+          .strict(),
+      )
+      .max(8)
+      .default([]),
     headerNavigation: z.array(linkSchema).max(12).optional(),
     footer: z
       .object({

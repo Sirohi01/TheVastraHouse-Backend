@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { aspectRatios } from "../models/shared/mediaReference.js";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
 import { customerText } from "../services/contentGuardService.js";
 import { validateRequest } from "../middleware/validateRequest.js";
@@ -44,7 +45,7 @@ const mediaSchema = z
     altText: z.string().min(3).max(160),
     type: z.enum(["image", "video", "pdf", "lookbook"]).default("image"),
     aspectRatio: z
-      .enum(["1:1", "4:5", "9:16", "16:7", "16:9", "21:9", "3:2", "2:3", "custom"])
+      .enum(aspectRatios)
       .default("16:9"),
     objectFit: z.enum(["cover", "contain"]).optional(),
   })
