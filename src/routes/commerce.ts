@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { Router } from "express";
 import { z } from "zod";
 import { attachOptionalUser, requireAuth } from "../middleware/authMiddleware.js";
+import { AppError } from "../middleware/errorHandler.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import {
   addCartItem,
@@ -111,26 +112,23 @@ commerceRouter.delete(
   },
 );
 
-commerceRouter.patch(
-  "/cart/attribution",
-  validateRequest({
-    body: z
-      .object({
-        utmSource: z.string().max(120).optional(),
-        utmMedium: z.string().max(120).optional(),
-        utmCampaign: z.string().max(120).optional(),
-        referrer: z.string().max(300).optional(),
-      })
-      .strict(),
-  }),
-  async (req, res, next) => {
-    try {
-      res.json({ cart: await setCartAttribution(getCommerceIdentity(req), req.body) });
-    } catch (error) {
-      next(error);
+// Optional telemetry: tolerant of empty/odd bodies and missing sessions (see setCartAttribution).
+commerceRouter.patch("/cart/attribution", async (req, res, next) => {
+  try {
+    const identity = getCommerceIdentity(req);
+    if (!identity.userId && !identity.guestSessionId) {
+      res.status(204).end();
+      return;
     }
-  },
-);
+    if (!identity.userId && !guestSessionSchema.safeParse(identity.guestSessionId).success) {
+      throw new AppError("Invalid guest session id", 400);
+    }
+
+    res.json(await setCartAttribution(identity, req.body));
+  } catch (error) {
+    next(error);
+  }
+});
 
 commerceRouter.patch(
   "/cart/gift-packaging",

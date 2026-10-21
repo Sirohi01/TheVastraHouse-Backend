@@ -11,7 +11,11 @@ import { Product } from "../models/Product.js";
 import { StockLedger } from "../models/StockLedger.js";
 import { User } from "../models/User.js";
 import { queryResult, stubStatics } from "../testing/commerceStubs.js";
-import { emitAbandonedCartEvents, mergeGuestCartIntoUserCart } from "../services/cartService.js";
+import {
+  emitAbandonedCartEvents,
+  mergeGuestCartIntoUserCart,
+  setCartAttribution,
+} from "../services/cartService.js";
 
 test("cart add-to-cart uses server-side product price and ledger stock", async (t) => {
   const originalProductFindOne = Product.findOne;
@@ -511,3 +515,107 @@ function buildCartLine(productId: Types.ObjectId, variantId: Types.ObjectId, qua
     variantId,
   };
 }
+
+test("cart attribution tolerates empty, odd and missing-session requests without a 500", async (t) => {
+  const updates: Array<{ filter: Record<string, unknown>; update: Record<string, unknown> }> = [];
+  const restore = stubStatics(Cart, {
+    exists: () => Promise.resolve({ _id: new Types.ObjectId() }),
+    updateOne: (filter: Record<string, unknown>, update: Record<string, unknown>) => {
+      updates.push({ filter, update });
+      return Promise.resolve({ matchedCount: 1 });
+    },
+  });
+  t.after(restore);
+  const { close, url } = await listen();
+  t.after(close);
+
+  const send = (body: string | undefined, headers: Record<string, string> = {}) =>
+    fetch(`${url}/api/${API_VERSION}/commerce/cart/attribution`, {
+      body,
+      headers: { "Content-Type": "application/json", ...headers },
+      method: "PATCH",
+    });
+  const guest = { "X-Guest-Session-Id": "guest-session-attribution" };
+
+  // No session at all (crawler): nothing to attribute, no error.
+  assert.equal((await send("{}")).status, 204);
+  // Malformed guest id is a client error.
+  assert.equal((await send("{}", { "X-Guest-Session-Id": "short" })).status, 400);
+  // Malformed JSON is a client error, not a server error.
+  assert.equal((await send("{not json", guest)).status, 400);
+  // Empty body and no UTM/referrer are no-ops.
+  const empty = await send(undefined, guest);
+  assert.equal(empty.status, 200);
+  assert.deepEqual(await empty.json(), { recorded: false, reason: "empty" });
+  assert.equal(updates.length, 0);
+
+  // Oversized / control-char / unknown fields are sanitised instead of rejected.
+  const odd = await send(
+    JSON.stringify({
+      extra: "ignored",
+      referrer: "https://www.google.com/search?q=secret-token#x",
+      utmCampaign: "x".repeat(500),
+      utmSource: " goo\u0000gle ",
+    }),
+    guest,
+  );
+  assert.equal(odd.status, 200);
+  assert.deepEqual(await odd.json(), { recorded: true });
+  const attribution = (updates[0].update.$set as { attribution: Record<string, string> })
+    .attribution;
+  assert.equal(attribution.utmSource, "google");
+  assert.equal(attribution.utmCampaign.length, 120);
+  assert.equal(attribution.referrer, "https://www.google.com/search");
+  assert.equal("extra" in attribution, false);
+});
+
+test("cart attribution survives a concurrent first-cart create (duplicate key) and repeats", async (t) => {
+  let created = false;
+  let upserts = 0;
+  const restore = stubStatics(Cart, {
+    exists: () => Promise.resolve(created ? { _id: new Types.ObjectId() } : null),
+    updateOne: (_filter: unknown, update: Record<string, unknown>) => {
+      if ("$setOnInsert" in update) {
+        upserts += 1;
+        // Simulate losing the race: another request inserted the cart first.
+        created = true;
+        const error = Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+        return Promise.reject(error);
+      }
+      return Promise.resolve({ matchedCount: created ? 1 : 0 });
+    },
+  });
+  t.after(restore);
+
+  const identity = { guestSessionId: "guest-session-race-001" };
+  const result = await setCartAttribution(identity, { utmSource: "newsletter" });
+
+  assert.equal(upserts, 1);
+  assert.deepEqual(result, { recorded: true });
+});
+
+test("cart attribution does not overwrite first-touch attribution", async (t) => {
+  const restore = stubStatics(Cart, {
+    exists: () => Promise.resolve({ _id: new Types.ObjectId() }),
+    updateOne: () => Promise.resolve({ matchedCount: 0 }),
+  });
+  t.after(restore);
+
+  const result = await setCartAttribution(
+    { guestSessionId: "guest-session-repeat-01" },
+    { utmSource: "instagram" },
+  );
+  assert.deepEqual(result, { recorded: false, reason: "already_set" });
+});
+
+test("cart attribution surfaces genuine database failures", async (t) => {
+  const restore = stubStatics(Cart, {
+    updateOne: () => Promise.reject(new Error("connection lost")),
+  });
+  t.after(restore);
+
+  await assert.rejects(
+    setCartAttribution({ guestSessionId: "guest-session-fail-001" }, { utmSource: "x" }),
+    /connection lost/,
+  );
+});

@@ -28,10 +28,18 @@ export const notFoundHandler: RequestHandler = (req, _res, next) => {
 };
 
 export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
-  const statusCode = error instanceof AppError ? error.statusCode : 500;
+  const statusCode = resolveStatusCode(error);
   const requestIdValue = req.id ?? randomUUID();
 
-  logger.error({ error, requestId: requestIdValue }, "Request failed");
+  // Client mistakes (bad JSON, oversized body) are not server failures; keep them out of error logs.
+  if (statusCode >= 500) {
+    logger.error(
+      { error, method: req.method, path: req.path, requestId: requestIdValue },
+      "Request failed",
+    );
+  } else {
+    logger.debug({ statusCode, path: req.path, requestId: requestIdValue }, "Request rejected");
+  }
 
   res.status(statusCode).json({
     error: {
@@ -44,3 +52,22 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
     },
   });
 };
+
+function resolveStatusCode(error: unknown) {
+  if (error instanceof AppError) return error.statusCode;
+
+  // body-parser errors (malformed JSON, payload too large) carry an HTTP status and a type.
+  const candidate = error as { status?: unknown; type?: unknown } | null;
+  if (
+    candidate &&
+    typeof candidate.type === "string" &&
+    candidate.type.startsWith("entity.") &&
+    typeof candidate.status === "number" &&
+    candidate.status >= 400 &&
+    candidate.status < 500
+  ) {
+    return candidate.status;
+  }
+
+  return 500;
+}

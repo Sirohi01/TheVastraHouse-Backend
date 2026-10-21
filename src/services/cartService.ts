@@ -127,12 +127,21 @@ export async function getOrCreateCart(identity: CommerceIdentity) {
     return existing;
   }
 
-  const cart = await Cart.create({
-    ...filter,
-    giftPackaging: { enabled: false, fee: 0 },
-    items: [],
-    lastActivityAt: new Date(),
-  });
+  let cart;
+  try {
+    cart = await Cart.create({
+      ...filter,
+      giftPackaging: { enabled: false, fee: 0 },
+      items: [],
+      lastActivityAt: new Date(),
+    });
+  } catch (error) {
+    // A concurrent request created this visitor's cart first (unique guest/user index).
+    if (!isDuplicateKeyError(error)) throw error;
+    const raced = await Cart.findOne(filter);
+    if (!raced) throw error;
+    return raced;
+  }
   cart.totals = await calculateCartTotals(cart);
   await cart.save();
   return cart;
@@ -312,15 +321,104 @@ export type CartAttribution = {
   referrer?: string;
 };
 
-export async function setCartAttribution(identity: CommerceIdentity, attribution: CartAttribution) {
-  const cart = await getOrCreateCart(identity);
+export type CartAttributionResult = { recorded: boolean; reason?: "empty" | "already_set" };
 
-  if (!cart.attribution?.utmSource && !cart.attribution?.referrer) {
-    cart.attribution = attribution;
-    await cart.save();
+const ATTRIBUTION_FIELD_LIMITS: Record<keyof CartAttribution, number> = {
+  utmSource: 120,
+  utmMedium: 120,
+  utmCampaign: 120,
+  referrer: 300,
+};
+
+/**
+ * Attribution is optional telemetry: bad values are dropped or trimmed, never rejected. Control
+ * characters are stripped and the referrer is reduced to origin + path so query strings (which
+ * can carry tokens or personal data) are never stored.
+ */
+export function sanitizeCartAttribution(input: unknown): CartAttribution {
+  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const result: CartAttribution = {};
+
+  for (const key of Object.keys(ATTRIBUTION_FIELD_LIMITS) as Array<keyof CartAttribution>) {
+    const raw = source[key];
+    if (typeof raw !== "string") continue;
+
+    let value = raw.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+    if (key === "referrer") {
+      value = normalizeReferrer(value);
+    }
+    value = value.slice(0, ATTRIBUTION_FIELD_LIMITS[key]);
+    if (value) result[key] = value;
   }
 
-  return cart;
+  return result;
+}
+
+function normalizeReferrer(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "";
+  }
+}
+
+function isDuplicateKeyError(error: unknown) {
+  return Boolean(
+    error && typeof error === "object" && (error as { code?: unknown }).code === 11000,
+  );
+}
+
+/**
+ * Records first-touch attribution with atomic writes only (no cart load, no snapshot refresh).
+ * A visitor with no cart yet gets a minimal one via upsert; concurrent first requests that race
+ * on the unique guest/user index resolve by retrying instead of surfacing a duplicate-key 500.
+ */
+export async function setCartAttribution(
+  identity: CommerceIdentity,
+  rawAttribution: unknown,
+): Promise<CartAttributionResult> {
+  assertCommerceIdentity(identity);
+  const attribution = sanitizeCartAttribution(rawAttribution);
+
+  if (Object.keys(attribution).length === 0) {
+    return { recorded: false, reason: "empty" };
+  }
+
+  const filter = identity.userId
+    ? { userId: identity.userId }
+    : { guestSessionId: identity.guestSessionId };
+  const unattributed = {
+    ...filter,
+    "attribution.referrer": { $exists: false },
+    "attribution.utmSource": { $exists: false },
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const updated = await Cart.updateOne(unattributed, { $set: { attribution } });
+    if (updated.matchedCount > 0) {
+      return { recorded: true };
+    }
+
+    if (await Cart.exists(filter)) {
+      return { recorded: false, reason: "already_set" };
+    }
+
+    try {
+      await Cart.updateOne(
+        filter,
+        { $setOnInsert: { attribution, lastActivityAt: new Date() } },
+        { upsert: true },
+      );
+      return { recorded: true };
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) throw error;
+      // Another request created the cart first; loop to apply attribution to it.
+    }
+  }
+
+  return { recorded: false, reason: "already_set" };
 }
 
 export async function setGiftPackaging(identity: CommerceIdentity, enabled: boolean) {
