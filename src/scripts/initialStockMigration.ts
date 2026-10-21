@@ -29,10 +29,11 @@ async function main() {
   if (warehouse) {
     log(`Using existing warehouse "${warehouse.name}" (${warehouse._id})`);
   } else {
-    const referenced = await Product.findOne({ brandId: { $exists: true } })
+    const referenced = (await Product.findOne({ brandId: { $exists: true } })
       .select("brandId")
-      .lean();
-    let brandId = referenced?.brandId ?? (await Brand.findOne().sort({ createdAt: 1 }))?._id;
+      .lean()) as { brandId?: unknown } | null;
+    let brandId: unknown =
+      referenced?.brandId ?? (await Brand.findOne().sort({ createdAt: 1 }))?._id;
     log(
       `Would create warehouse "${WAREHOUSE_NAME}" (placeholder address), brand ${brandId ?? "new: The Vastra House"}`,
     );
