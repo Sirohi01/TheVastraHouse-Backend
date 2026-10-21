@@ -18,6 +18,7 @@
     "seed:admin": "tsx src/scripts/seedAdmin.ts",
     "seed:storefront": "tsx src/scripts/seedStorefront.ts",
     "verify:phase4": "tsx src/scripts/verifyPhase4Cloudinary.ts",
+    "indexnow:submit": "tsx src/scripts/submitIndexNow.ts",
     "db:backup": "tsx src/scripts/backupDatabase.ts",
     "db:restore": "tsx src/scripts/restoreDatabase.ts"
   },

@@ -41,6 +41,7 @@ import {
 } from "../services/reviewService.js";
 import { invalidateSearchIndex, searchProducts } from "../services/searchService.js";
 import { getPublicSeoSettings } from "../services/seoService.js";
+import { notifyIndexNow } from "../services/indexNowService.js";
 import { validateGstRate } from "../services/taxValidationService.js";
 import { buildPaginatedResult, parsePagination } from "../utils/pagination.js";
 import { buildQuery } from "../utils/queryBuilder.js";
@@ -1005,6 +1006,7 @@ async function createProduct(req: Request, res: Response, next: NextFunction) {
     await product.save();
     await ensureLedgersForVariants(variants);
     invalidateSearchIndex();
+    if (product.active !== false) notifyIndexNow([`/shop/${slug}`]);
 
     res.status(201).json({ product });
   } catch (error) {
@@ -1065,6 +1067,12 @@ async function updateProduct(req: Request, res: Response, next: NextFunction) {
     }
 
     invalidateSearchIndex();
+    // Ping both URLs after a slug change so the old one is recrawled and follows its redirect.
+    notifyIndexNow(
+      update.slug && update.slug !== existing.slug
+        ? [`/shop/${update.slug}`, `/shop/${existing.slug}`]
+        : [`/shop/${product.slug}`],
+    );
     res.json({ product });
   } catch (error) {
     next(error);

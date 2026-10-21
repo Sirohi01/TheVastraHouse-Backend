@@ -19,6 +19,11 @@ const envSchema = z.object({
   BACKEND_PORT: z.coerce.number().int().positive().default(4000),
   FRONTEND_PUBLIC_URL: z.string().url().default("http://localhost:3000"),
   BACKEND_PUBLIC_URL: z.string().url().default("http://localhost:4000"),
+  // Optional IndexNow key; must also be served by the storefront at /indexnow-key.txt.
+  INDEXNOW_KEY: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().regex(/^[a-zA-Z0-9-]{8,128}$/).optional(),
+  ),
   // Comma-separated extra storefront origins (e.g. the platform URL while a domain moves).
   CORS_ALLOWED_ORIGINS: z.string().default(""),
   MONGODB_URI: z.string().min(1).default("mongodb://127.0.0.1:27017/vastra_house"),
