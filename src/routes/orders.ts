@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 import { validateRequest } from "../middleware/validateRequest.js";
 import { Order, orderStatuses } from "../models/Order.js";
 import { OrderTimeline } from "../models/OrderTimeline.js";
@@ -38,6 +39,8 @@ const actorFromRequest = (req: { user?: { id: string; type: "customer" | "admin"
 
 ordersRouter.get(
   "/track/:orderNumber",
+  // Public lookup by order number: throttle per IP across all numbers to stop enumeration.
+  rateLimit({ keyByPath: false, keyPrefix: "order-track", max: 30, windowMs: 15 * 60 * 1000 }),
   validateRequest({ params: z.object({ orderNumber: orderNumberSchema }).strict() }),
   async (req, res, next) => {
     try {

@@ -10,6 +10,8 @@ type RateLimitOptions = {
   keyPrefix: string;
   /** Extra identity dimension (e.g. the submitted email) so limits also apply across IPs. */
   identify?: (req: Request) => string | undefined;
+  /** Set false when the path itself carries the variable being protected (e.g. an order number). */
+  keyByPath?: boolean;
 };
 
 type Bucket = {
@@ -27,10 +29,11 @@ const memoryBuckets = new Map<string, Bucket>();
 export function rateLimit(options: RateLimitOptions): RequestHandler {
   return async (req, res, next) => {
     const identity = options.identify?.(req);
-    const keys = [`${options.keyPrefix}:${req.path}:ip:${req.ip}`];
+    const scope = options.keyByPath === false ? "*" : req.path;
+    const keys = [`${options.keyPrefix}:${scope}:ip:${req.ip}`];
 
     if (identity) {
-      keys.push(`${options.keyPrefix}:${req.path}:id:${identity.toLowerCase()}`);
+      keys.push(`${options.keyPrefix}:${scope}:id:${identity.toLowerCase()}`);
     }
 
     try {
